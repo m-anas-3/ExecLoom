@@ -1,0 +1,13 @@
+{
+  "name": "@execloom/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"Web app not implemented yet\"",
+    "dev": "echo \"Web app not implemented yet\"",
+    "lint": "echo \"Web app not implemented yet\"",
+    "test": "echo \"No tests yet for @execloom/web\"",
+    "typecheck": "echo \"Web app not implemented yet\""
+  }
+}
