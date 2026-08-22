@@ -15,7 +15,8 @@
     "@execloom/contracts": "workspace:*",
     "@execloom/db": "workspace:*",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
