@@ -2,6 +2,7 @@ import express from "express";
 import type { HealthResponse } from "@execloom/contracts";
 import { getDatabaseHealth } from "@execloom/db";
 
+import { createExecutionRoutes } from "./modules/executions/executions.routes.js";
 import { createWorkflowRoutes } from "./modules/workflows/workflows.routes.js";
 
 export function createApp() {
@@ -21,7 +22,9 @@ export function createApp() {
     res.status(database.status === "ok" ? 200 : 503).json(response);
   });
 
+  app.use(createExecutionRoutes());
   app.use("/workflows", createWorkflowRoutes());
+
 
   app.use(
     (
