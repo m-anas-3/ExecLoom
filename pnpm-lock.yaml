@@ -59,6 +59,9 @@ importers:
       '@execloom/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@execloom/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@execloom/queue':
         specifier: workspace:*
         version: link:../../packages/queue
@@ -107,6 +110,9 @@ importers:
       '@execloom/config':
         specifier: workspace:*
         version: link:../config
+      '@execloom/workflow-core':
+        specifier: workspace:*
+        version: link:../workflow-core
       drizzle-orm:
         specifier: ^0.44.5
         version: 0.44.7(postgres@3.4.9)

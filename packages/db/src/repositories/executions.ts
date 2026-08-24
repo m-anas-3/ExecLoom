@@ -1,6 +1,10 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
+import {
+  assertExecutionTransition,
+  assertStepRunTransition
+} from "@execloom/workflow-core";
 
-import { withDatabase } from "../client.js";
+import { withDatabase, type DatabaseClient } from "../client.js";
 import {
   executionEvents,
   executions,
@@ -12,8 +16,20 @@ import {
 type WorkflowDefinition = {
   steps?: Array<{
     key?: unknown;
+    type?: unknown;
+    name?: unknown;
+    config?: unknown;
   }>;
 };
+
+export type WorkflowStepDefinitionRecord = {
+  key: string;
+  type: string;
+  name?: string;
+  config: Record<string, unknown>;
+};
+
+type DatabaseTransaction = Parameters<Parameters<DatabaseClient["db"]["transaction"]>[0]>[0];
 
 export type TriggerExecutionRecordInput = {
   ownerId: string;
@@ -158,9 +174,366 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
   });
 }
 
+export async function claimQueuedExecutionStep(executionId: string) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [execution] = await tx
+        .select()
+        .from(executions)
+        .where(eq(executions.id, executionId))
+        .limit(1);
+
+      if (!execution) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      if (execution.status !== "queued") {
+        return {
+          kind: "execution_not_claimable" as const,
+          status: execution.status
+        };
+      }
+
+      const [stepRun] = await tx
+        .select()
+        .from(stepRuns)
+        .where(and(eq(stepRuns.executionId, execution.id), eq(stepRuns.status, "queued")))
+        .orderBy(asc(stepRuns.createdAt))
+        .limit(1);
+
+      if (!stepRun) {
+        return { kind: "step_not_found" as const };
+      }
+
+      const [version] = await tx
+        .select({
+          definitionJson: workflowVersions.definitionJson
+        })
+        .from(workflowVersions)
+        .where(eq(workflowVersions.id, execution.workflowVersionId))
+        .limit(1);
+
+      if (!version) {
+        return { kind: "workflow_version_not_found" as const };
+      }
+
+      const stepDefinition = getStepDefinition(version.definitionJson, stepRun.stepKey);
+
+      if (!stepDefinition) {
+        return { kind: "step_definition_not_found" as const };
+      }
+
+      assertExecutionTransition(execution.status, "running");
+      assertStepRunTransition(stepRun.status, "running");
+
+      const now = new Date();
+      const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+      const [runningExecution] = await tx
+        .update(executions)
+        .set({
+          status: "running",
+          startedAt: now
+        })
+        .where(and(eq(executions.id, execution.id), eq(executions.status, "queued")))
+        .returning();
+
+      if (!runningExecution) {
+        return { kind: "execution_claim_lost" as const };
+      }
+
+      const [runningStep] = await tx
+        .update(stepRuns)
+        .set({
+          status: "running",
+          attemptCount: stepRun.attemptCount + 1,
+          startedAt: now
+        })
+        .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "queued")))
+        .returning();
+
+      if (!runningStep) {
+        return { kind: "step_claim_lost" as const };
+      }
+
+      await tx.insert(executionEvents).values([
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo,
+          type: "execution.started",
+          payloadJson: {
+            executionId: execution.id
+          }
+        },
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo + 1,
+          type: "step.started",
+          payloadJson: {
+            executionId: execution.id,
+            stepRunId: runningStep.id,
+            stepKey: runningStep.stepKey,
+            attemptNo: runningStep.attemptCount
+          }
+        }
+      ]);
+
+      return {
+        kind: "claimed" as const,
+        execution: runningExecution,
+        stepRun: runningStep,
+        stepDefinition
+      };
+    });
+  });
+}
+
+export async function completeClaimedExecutionStep(input: {
+  executionId: string;
+  stepRunId: string;
+  outputJson: unknown;
+}) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [execution] = await tx
+        .select()
+        .from(executions)
+        .where(eq(executions.id, input.executionId))
+        .limit(1);
+
+      if (!execution) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      if (execution.status !== "running") {
+        return { kind: "execution_not_completable" as const, status: execution.status };
+      }
+
+      const [stepRun] = await tx
+        .select()
+        .from(stepRuns)
+        .where(and(eq(stepRuns.id, input.stepRunId), eq(stepRuns.executionId, execution.id)))
+        .limit(1);
+
+      if (!stepRun) {
+        return { kind: "step_not_found" as const };
+      }
+
+      if (stepRun.status !== "running") {
+        return { kind: "step_not_completable" as const, status: stepRun.status };
+      }
+
+      assertStepRunTransition(stepRun.status, "succeeded");
+      assertExecutionTransition(execution.status, "succeeded");
+
+      const completedAt = new Date();
+      const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+      const [completedStep] = await tx
+        .update(stepRuns)
+        .set({
+          status: "succeeded",
+          outputJson: input.outputJson,
+          endedAt: completedAt
+        })
+        .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
+        .returning();
+
+      if (!completedStep) {
+        throw new Error("Failed to complete claimed step");
+      }
+
+      const [completedExecution] = await tx
+        .update(executions)
+        .set({
+          status: "succeeded",
+          outputJson: {
+            completed: true,
+            completedStepKey: completedStep.stepKey
+          },
+          endedAt: completedAt
+        })
+        .where(and(eq(executions.id, execution.id), eq(executions.status, "running")))
+        .returning();
+
+      if (!completedExecution) {
+        throw new Error("Failed to complete claimed execution");
+      }
+
+      await tx.insert(executionEvents).values([
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo,
+          type: "step.succeeded",
+          payloadJson: {
+            executionId: execution.id,
+            stepRunId: completedStep.id,
+            stepKey: completedStep.stepKey,
+            attemptNo: completedStep.attemptCount
+          }
+        },
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo + 1,
+          type: "execution.completed",
+          payloadJson: {
+            executionId: execution.id,
+            status: completedExecution.status
+          }
+        }
+      ]);
+
+      return {
+        kind: "completed" as const,
+        execution: completedExecution,
+        stepRun: completedStep
+      };
+    });
+  });
+}
+
+export async function failClaimedExecutionStep(input: {
+  executionId: string;
+  stepRunId: string;
+  errorJson: unknown;
+}) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [execution] = await tx
+        .select()
+        .from(executions)
+        .where(eq(executions.id, input.executionId))
+        .limit(1);
+
+      if (!execution) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      if (execution.status !== "running") {
+        return { kind: "execution_not_failable" as const, status: execution.status };
+      }
+
+      const [stepRun] = await tx
+        .select()
+        .from(stepRuns)
+        .where(and(eq(stepRuns.id, input.stepRunId), eq(stepRuns.executionId, execution.id)))
+        .limit(1);
+
+      if (!stepRun) {
+        return { kind: "step_not_found" as const };
+      }
+
+      if (stepRun.status !== "running") {
+        return { kind: "step_not_failable" as const, status: stepRun.status };
+      }
+
+      assertStepRunTransition(stepRun.status, "failed");
+      assertExecutionTransition(execution.status, "failed");
+
+      const failedAt = new Date();
+      const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+      const [failedStep] = await tx
+        .update(stepRuns)
+        .set({
+          status: "failed",
+          errorJson: input.errorJson,
+          endedAt: failedAt
+        })
+        .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
+        .returning();
+
+      if (!failedStep) {
+        throw new Error("Failed to mark claimed step as failed");
+      }
+
+      const [failedExecution] = await tx
+        .update(executions)
+        .set({
+          status: "failed",
+          errorJson: input.errorJson,
+          endedAt: failedAt
+        })
+        .where(and(eq(executions.id, execution.id), eq(executions.status, "running")))
+        .returning();
+
+      if (!failedExecution) {
+        throw new Error("Failed to mark claimed execution as failed");
+      }
+
+      await tx.insert(executionEvents).values([
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo,
+          type: "step.failed",
+          payloadJson: {
+            executionId: execution.id,
+            stepRunId: failedStep.id,
+            stepKey: failedStep.stepKey,
+            attemptNo: failedStep.attemptCount,
+            error: input.errorJson
+          }
+        },
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo + 1,
+          type: "execution.failed",
+          payloadJson: {
+            executionId: execution.id,
+            error: input.errorJson
+          }
+        }
+      ]);
+
+      return {
+        kind: "failed" as const,
+        execution: failedExecution,
+        stepRun: failedStep
+      };
+    });
+  });
+}
+
 function getFirstStepKey(definitionJson: unknown): string | null {
   const definition = definitionJson as WorkflowDefinition;
   const firstStepKey = definition.steps?.[0]?.key;
 
   return typeof firstStepKey === "string" && firstStepKey.length > 0 ? firstStepKey : null;
+}
+
+function getStepDefinition(
+  definitionJson: unknown,
+  stepKey: string
+): WorkflowStepDefinitionRecord | null {
+  const definition = definitionJson as WorkflowDefinition;
+  const step = definition.steps?.find((candidate) => candidate.key === stepKey);
+
+  if (!step || typeof step.key !== "string" || typeof step.type !== "string") {
+    return null;
+  }
+
+  return {
+    key: step.key,
+    type: step.type,
+    name: typeof step.name === "string" ? step.name : undefined,
+    config: isJsonObject(step.config) ? step.config : {}
+  };
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function getNextEventSequenceNo(
+  tx: DatabaseTransaction,
+  executionId: string
+): Promise<number> {
+  const [eventSequence] = await tx
+    .select({
+      maxSequenceNo: sql<number>`coalesce(max(${executionEvents.sequenceNo}), 0)`
+    })
+    .from(executionEvents)
+    .where(eq(executionEvents.executionId, executionId));
+
+  return Number(eventSequence?.maxSequenceNo ?? 0) + 1;
 }

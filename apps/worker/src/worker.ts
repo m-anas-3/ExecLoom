@@ -4,10 +4,17 @@ import { Worker as BullWorker } from "bullmq";
 
 import { loadConfig } from "@execloom/config";
 import {
+  claimQueuedExecutionStep,
+  completeClaimedExecutionStep,
+  failClaimedExecutionStep
+} from "@execloom/db";
+import {
   createRedisConnectionOptions,
   executionJobPayloadSchema,
   executionQueueName
 } from "@execloom/queue";
+
+import { executeWorkflowStep } from "./executors.js";
 
 loadDotenv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
@@ -30,6 +37,47 @@ const executionWorker = new BullWorker(
       workflowVersionId: payload.workflowVersionId,
       attemptsMade: job.attemptsMade
     });
+
+    const claim = await claimQueuedExecutionStep(payload.executionId);
+
+    if (claim.kind !== "claimed") {
+      console.log("Execution job skipped", {
+        executionId: payload.executionId,
+        result: claim.kind
+      });
+      return;
+    }
+
+    try {
+      const output = await executeWorkflowStep({
+        step: claim.stepDefinition,
+        executionInput: claim.execution.inputJson,
+        stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson
+      });
+
+      const result = await completeClaimedExecutionStep({
+        executionId: claim.execution.id,
+        stepRunId: claim.stepRun.id,
+        outputJson: output
+      });
+
+      console.log("Execution job processed", {
+        executionId: payload.executionId,
+        result: result.kind
+      });
+    } catch (error) {
+      const failure = await failClaimedExecutionStep({
+        executionId: claim.execution.id,
+        stepRunId: claim.stepRun.id,
+        errorJson: serializeError(error)
+      });
+
+      console.error("Execution job failed during step execution", {
+        executionId: payload.executionId,
+        result: failure.kind,
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
   },
   {
     connection: createRedisConnectionOptions(config.REDIS_URL),
@@ -68,3 +116,18 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   void shutdown().then(() => process.exit(0));
 });
+
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    message: "Unknown error",
+    value: error
+  };
+}
