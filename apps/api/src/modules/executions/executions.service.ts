@@ -6,6 +6,7 @@ import type {
   TriggerExecutionRequest
 } from "@execloom/contracts";
 import { getExecutionDetailByOwner, triggerExecutionForWorkflow } from "@execloom/db";
+import { enqueueExecutionJob } from "@execloom/queue";
 
 type ExecutionDetailRecord = NonNullable<Awaited<ReturnType<typeof getExecutionDetailByOwner>>>;
 type ExecutionRecord = ExecutionDetailRecord["execution"];
@@ -52,6 +53,11 @@ export async function triggerExecution(
       "Workflow version must contain at least one step"
     );
   }
+
+  await enqueueExecutionJob({
+    executionId: result.execution.id,
+    workflowVersionId: result.execution.workflowVersionId
+  });
 
   return {
     execution: mapExecution(result.execution),
