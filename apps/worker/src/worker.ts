@@ -10,6 +10,7 @@ import {
 } from "@execloom/db";
 import {
   createRedisConnectionOptions,
+  enqueueExecutionJob,
   executionJobPayloadSchema,
   executionQueueName
 } from "@execloom/queue";
@@ -48,22 +49,13 @@ const executionWorker = new BullWorker(
       return;
     }
 
+    let output: unknown;
+
     try {
-      const output = await executeWorkflowStep({
+      output = await executeWorkflowStep({
         step: claim.stepDefinition,
         executionInput: claim.execution.inputJson,
         stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson
-      });
-
-      const result = await completeClaimedExecutionStep({
-        executionId: claim.execution.id,
-        stepRunId: claim.stepRun.id,
-        outputJson: output
-      });
-
-      console.log("Execution job processed", {
-        executionId: payload.executionId,
-        result: result.kind
       });
     } catch (error) {
       const failure = await failClaimedExecutionStep({
@@ -77,7 +69,31 @@ const executionWorker = new BullWorker(
         result: failure.kind,
         error: error instanceof Error ? error.message : "Unknown error"
       });
+      return;
     }
+
+    const result = await completeClaimedExecutionStep({
+      executionId: claim.execution.id,
+      stepRunId: claim.stepRun.id,
+      outputJson: output
+    });
+
+    if (result.kind === "next_step_queued") {
+      await enqueueExecutionJob(
+        {
+          executionId: claim.execution.id,
+          workflowVersionId: claim.execution.workflowVersionId
+        },
+        {
+          jobId: `${claim.execution.id}:${result.nextStepRun.id}`
+        }
+      );
+    }
+
+    console.log("Execution job processed", {
+      executionId: payload.executionId,
+      result: result.kind
+    });
   },
   {
     connection: createRedisConnectionOptions(config.REDIS_URL),

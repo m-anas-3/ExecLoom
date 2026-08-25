@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
+export const workflowStepTypeSchema = z.enum(["noop", "delay"]);
 
 export const healthResponseSchema = z.object({
   service: z.string(),
@@ -16,7 +17,7 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
 export const workflowStepDefinitionSchema = z.object({
   key: z.string().min(1).max(80),
-  type: z.string().min(1).max(80),
+  type: workflowStepTypeSchema,
   name: z.string().min(1).max(120).optional(),
   config: jsonObjectSchema.default({})
 });
@@ -119,6 +120,7 @@ export const executionDetailResponseSchema = z.object({
 });
 
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
+export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;

@@ -30,6 +30,7 @@ export type WorkflowStepDefinitionRecord = {
 };
 
 type DatabaseTransaction = Parameters<Parameters<DatabaseClient["db"]["transaction"]>[0]>[0];
+type ExecutionEventInsert = typeof executionEvents.$inferInsert;
 
 export type TriggerExecutionRecordInput = {
   ownerId: string;
@@ -187,7 +188,7 @@ export async function claimQueuedExecutionStep(executionId: string) {
         return { kind: "execution_not_found" as const };
       }
 
-      if (execution.status !== "queued") {
+      if (execution.status !== "queued" && execution.status !== "running") {
         return {
           kind: "execution_not_claimable" as const,
           status: execution.status
@@ -223,23 +224,39 @@ export async function claimQueuedExecutionStep(executionId: string) {
         return { kind: "step_definition_not_found" as const };
       }
 
-      assertExecutionTransition(execution.status, "running");
       assertStepRunTransition(stepRun.status, "running");
 
       const now = new Date();
       const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+      const eventValues: ExecutionEventInsert[] = [];
 
-      const [runningExecution] = await tx
-        .update(executions)
-        .set({
-          status: "running",
-          startedAt: now
-        })
-        .where(and(eq(executions.id, execution.id), eq(executions.status, "queued")))
-        .returning();
+      let runningExecution = execution;
 
-      if (!runningExecution) {
-        return { kind: "execution_claim_lost" as const };
+      if (execution.status === "queued") {
+        assertExecutionTransition(execution.status, "running");
+
+        const [startedExecution] = await tx
+          .update(executions)
+          .set({
+            status: "running",
+            startedAt: now
+          })
+          .where(and(eq(executions.id, execution.id), eq(executions.status, "queued")))
+          .returning();
+
+        if (!startedExecution) {
+          return { kind: "execution_claim_lost" as const };
+        }
+
+        runningExecution = startedExecution;
+        eventValues.push({
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo,
+          type: "execution.started",
+          payloadJson: {
+            executionId: execution.id
+          }
+        });
       }
 
       const [runningStep] = await tx
@@ -256,27 +273,19 @@ export async function claimQueuedExecutionStep(executionId: string) {
         return { kind: "step_claim_lost" as const };
       }
 
-      await tx.insert(executionEvents).values([
-        {
+      eventValues.push({
+        executionId: execution.id,
+        sequenceNo: nextSequenceNo + eventValues.length,
+        type: "step.started",
+        payloadJson: {
           executionId: execution.id,
-          sequenceNo: nextSequenceNo,
-          type: "execution.started",
-          payloadJson: {
-            executionId: execution.id
-          }
-        },
-        {
-          executionId: execution.id,
-          sequenceNo: nextSequenceNo + 1,
-          type: "step.started",
-          payloadJson: {
-            executionId: execution.id,
-            stepRunId: runningStep.id,
-            stepKey: runningStep.stepKey,
-            attemptNo: runningStep.attemptCount
-          }
+          stepRunId: runningStep.id,
+          stepKey: runningStep.stepKey,
+          attemptNo: runningStep.attemptCount
         }
-      ]);
+      });
+
+      await tx.insert(executionEvents).values(eventValues);
 
       return {
         kind: "claimed" as const,
@@ -323,8 +332,21 @@ export async function completeClaimedExecutionStep(input: {
         return { kind: "step_not_completable" as const, status: stepRun.status };
       }
 
+      const [version] = await tx
+        .select({
+          definitionJson: workflowVersions.definitionJson
+        })
+        .from(workflowVersions)
+        .where(eq(workflowVersions.id, execution.workflowVersionId))
+        .limit(1);
+
+      if (!version) {
+        return { kind: "workflow_version_not_found" as const };
+      }
+
+      const nextStepDefinition = getNextStepDefinition(version.definitionJson, stepRun.stepKey);
+
       assertStepRunTransition(stepRun.status, "succeeded");
-      assertExecutionTransition(execution.status, "succeeded");
 
       const completedAt = new Date();
       const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
@@ -342,6 +364,60 @@ export async function completeClaimedExecutionStep(input: {
       if (!completedStep) {
         throw new Error("Failed to complete claimed step");
       }
+
+      if (nextStepDefinition) {
+        assertStepRunTransition("pending", "queued");
+
+        const [nextStepRun] = await tx
+          .insert(stepRuns)
+          .values({
+            executionId: execution.id,
+            stepKey: nextStepDefinition.key,
+            status: "queued",
+            inputJson: input.outputJson,
+            queuedAt: completedAt
+          })
+          .returning();
+
+        if (!nextStepRun) {
+          throw new Error("Failed to queue next step run");
+        }
+
+        await tx.insert(executionEvents).values([
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo,
+            type: "step.succeeded",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: completedStep.id,
+              stepKey: completedStep.stepKey,
+              attemptNo: completedStep.attemptCount
+            }
+          },
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo + 1,
+            type: "step.queued",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: nextStepRun.id,
+              stepKey: nextStepRun.stepKey,
+              previousStepKey: completedStep.stepKey
+            }
+          }
+        ]);
+
+        return {
+          kind: "next_step_queued" as const,
+          execution,
+          stepRun: completedStep,
+          nextStepRun,
+          nextStepDefinition
+        };
+      }
+
+      assertExecutionTransition(execution.status, "succeeded");
 
       const [completedExecution] = await tx
         .update(executions)
@@ -518,6 +594,26 @@ function getStepDefinition(
     name: typeof step.name === "string" ? step.name : undefined,
     config: isJsonObject(step.config) ? step.config : {}
   };
+}
+
+function getNextStepDefinition(
+  definitionJson: unknown,
+  currentStepKey: string
+): WorkflowStepDefinitionRecord | null {
+  const definition = definitionJson as WorkflowDefinition;
+  const currentStepIndex = definition.steps?.findIndex((step) => step.key === currentStepKey) ?? -1;
+
+  if (currentStepIndex < 0) {
+    return null;
+  }
+
+  const nextStep = definition.steps?.[currentStepIndex + 1];
+
+  if (!nextStep || typeof nextStep.key !== "string") {
+    return null;
+  }
+
+  return getStepDefinition(definitionJson, nextStep.key);
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
