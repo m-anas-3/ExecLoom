@@ -19,7 +19,13 @@ type WorkflowDefinition = {
     type?: unknown;
     name?: unknown;
     config?: unknown;
+    retry?: unknown;
   }>;
+};
+
+export type WorkflowStepRetryPolicyRecord = {
+  maxAttempts: number;
+  backoffMs: number;
 };
 
 export type WorkflowStepDefinitionRecord = {
@@ -27,6 +33,7 @@ export type WorkflowStepDefinitionRecord = {
   type: string;
   name?: string;
   config: Record<string, unknown>;
+  retry: WorkflowStepRetryPolicyRecord;
 };
 
 type DatabaseTransaction = Parameters<Parameters<DatabaseClient["db"]["transaction"]>[0]>[0];
@@ -264,6 +271,7 @@ export async function claimQueuedExecutionStep(executionId: string) {
         .set({
           status: "running",
           attemptCount: stepRun.attemptCount + 1,
+          errorJson: null,
           startedAt: now
         })
         .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "queued")))
@@ -356,6 +364,7 @@ export async function completeClaimedExecutionStep(input: {
         .set({
           status: "succeeded",
           outputJson: input.outputJson,
+          errorJson: null,
           endedAt: completedAt
         })
         .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
@@ -468,10 +477,11 @@ export async function completeClaimedExecutionStep(input: {
   });
 }
 
-export async function failClaimedExecutionStep(input: {
+export async function failOrRetryClaimedExecutionStep(input: {
   executionId: string;
   stepRunId: string;
   errorJson: unknown;
+  retryPolicy: WorkflowStepRetryPolicyRecord;
 }) {
   return withDatabase(async ({ db }) => {
     return db.transaction(async (tx) => {
@@ -501,6 +511,77 @@ export async function failClaimedExecutionStep(input: {
 
       if (stepRun.status !== "running") {
         return { kind: "step_not_failable" as const, status: stepRun.status };
+      }
+
+      if (stepRun.attemptCount < input.retryPolicy.maxAttempts) {
+        assertStepRunTransition(stepRun.status, "retrying");
+        assertStepRunTransition("retrying", "queued");
+
+        const retryAt = new Date();
+        const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+        const [retryingStep] = await tx
+          .update(stepRuns)
+          .set({
+            status: "retrying",
+            errorJson: input.errorJson
+          })
+          .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
+          .returning();
+
+        if (!retryingStep) {
+          throw new Error("Failed to mark claimed step as retrying");
+        }
+
+        const [queuedStep] = await tx
+          .update(stepRuns)
+          .set({
+            status: "queued",
+            queuedAt: retryAt,
+            startedAt: null,
+            endedAt: null
+          })
+          .where(and(eq(stepRuns.id, retryingStep.id), eq(stepRuns.status, "retrying")))
+          .returning();
+
+        if (!queuedStep) {
+          throw new Error("Failed to requeue failed step");
+        }
+
+        await tx.insert(executionEvents).values([
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo,
+            type: "step.retrying",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: queuedStep.id,
+              stepKey: queuedStep.stepKey,
+              attemptNo: stepRun.attemptCount,
+              maxAttempts: input.retryPolicy.maxAttempts,
+              backoffMs: input.retryPolicy.backoffMs,
+              error: input.errorJson
+            }
+          },
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo + 1,
+            type: "step.queued",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: queuedStep.id,
+              stepKey: queuedStep.stepKey,
+              reason: "retry"
+            }
+          }
+        ]);
+
+        return {
+          kind: "retry_queued" as const,
+          execution,
+          stepRun: queuedStep,
+          retryDelayMs: input.retryPolicy.backoffMs
+        };
       }
 
       assertStepRunTransition(stepRun.status, "failed");
@@ -570,6 +651,17 @@ export async function failClaimedExecutionStep(input: {
   });
 }
 
+export async function failClaimedExecutionStep(input: {
+  executionId: string;
+  stepRunId: string;
+  errorJson: unknown;
+}) {
+  return failOrRetryClaimedExecutionStep({
+    ...input,
+    retryPolicy: defaultStepRetryPolicy
+  });
+}
+
 function getFirstStepKey(definitionJson: unknown): string | null {
   const definition = definitionJson as WorkflowDefinition;
   const firstStepKey = definition.steps?.[0]?.key;
@@ -592,7 +684,8 @@ function getStepDefinition(
     key: step.key,
     type: step.type,
     name: typeof step.name === "string" ? step.name : undefined,
-    config: isJsonObject(step.config) ? step.config : {}
+    config: isJsonObject(step.config) ? step.config : {},
+    retry: getStepRetryPolicy(step.retry)
   };
 }
 
@@ -618,6 +711,38 @@ function getNextStepDefinition(
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const defaultStepRetryPolicy: WorkflowStepRetryPolicyRecord = {
+  maxAttempts: 1,
+  backoffMs: 0
+};
+
+function getStepRetryPolicy(value: unknown): WorkflowStepRetryPolicyRecord {
+  if (!isJsonObject(value)) {
+    return defaultStepRetryPolicy;
+  }
+
+  const maxAttempts =
+    typeof value.maxAttempts === "number" &&
+    Number.isInteger(value.maxAttempts) &&
+    value.maxAttempts >= 1 &&
+    value.maxAttempts <= 10
+      ? value.maxAttempts
+      : defaultStepRetryPolicy.maxAttempts;
+
+  const backoffMs =
+    typeof value.backoffMs === "number" &&
+    Number.isInteger(value.backoffMs) &&
+    value.backoffMs >= 0 &&
+    value.backoffMs <= 300_000
+      ? value.backoffMs
+      : defaultStepRetryPolicy.backoffMs;
+
+  return {
+    maxAttempts,
+    backoffMs
+  };
 }
 
 async function getNextEventSequenceNo(

@@ -251,6 +251,10 @@ function createStep(input: {
   return {
     key: "step_1",
     type: input.type,
-    config: input.config ?? {}
+    config: input.config ?? {},
+    retry: {
+      maxAttempts: 1,
+      backoffMs: 0
+    }
   };
 }

@@ -6,7 +6,7 @@ import { loadConfig } from "@execloom/config";
 import {
   claimQueuedExecutionStep,
   completeClaimedExecutionStep,
-  failClaimedExecutionStep
+  failOrRetryClaimedExecutionStep
 } from "@execloom/db";
 import {
   createRedisConnectionOptions,
@@ -58,11 +58,34 @@ const executionWorker = new BullWorker(
         stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson
       });
     } catch (error) {
-      const failure = await failClaimedExecutionStep({
+      const failure = await failOrRetryClaimedExecutionStep({
         executionId: claim.execution.id,
         stepRunId: claim.stepRun.id,
-        errorJson: serializeError(error)
+        errorJson: serializeError(error),
+        retryPolicy: claim.stepDefinition.retry
       });
+
+      if (failure.kind === "retry_queued") {
+        await enqueueExecutionJob(
+          {
+            executionId: claim.execution.id,
+            workflowVersionId: claim.execution.workflowVersionId
+          },
+          {
+            jobId: `${claim.execution.id}:${claim.stepRun.id}:attempt-${failure.stepRun.attemptCount + 1}`,
+            delay: failure.retryDelayMs
+          }
+        );
+
+        console.warn("Execution step retry queued", {
+          executionId: payload.executionId,
+          stepRunId: failure.stepRun.id,
+          retryDelayMs: failure.retryDelayMs,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+
+        return;
+      }
 
       console.error("Execution job failed during step execution", {
         executionId: payload.executionId,

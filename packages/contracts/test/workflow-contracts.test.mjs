@@ -21,7 +21,7 @@ describe("workflow step types", () => {
 
 describe("workflow definition contracts", () => {
   it("accepts a linear noop and delay workflow", () => {
-    const workflow = {
+    const parsed = workflowDefinitionSchema.parse({
       steps: [
         {
           key: "start",
@@ -36,9 +36,39 @@ describe("workflow definition contracts", () => {
           }
         }
       ]
-    };
+    });
 
-    assert.deepEqual(workflowDefinitionSchema.parse(workflow), workflow);
+    assert.deepEqual(parsed.steps[0]?.retry, {
+      maxAttempts: 1,
+      backoffMs: 0
+    });
+    assert.deepEqual(parsed.steps[1]?.retry, {
+      maxAttempts: 1,
+      backoffMs: 0
+    });
+  });
+
+  it("accepts explicit retry policy on workflow steps", () => {
+    const parsed = workflowDefinitionSchema.parse({
+      steps: [
+        {
+          key: "notify",
+          type: "http",
+          retry: {
+            maxAttempts: 3,
+            backoffMs: 2_000
+          },
+          config: {
+            url: "https://api.example.com/notify"
+          }
+        }
+      ]
+    });
+
+    assert.deepEqual(parsed.steps[0]?.retry, {
+      maxAttempts: 3,
+      backoffMs: 2_000
+    });
   });
 
   it("accepts http steps with default method and headers", () => {
@@ -175,5 +205,45 @@ describe("workflow definition contracts", () => {
 
     assert.deepEqual(parsed.inputSchema, {});
     assert.deepEqual(parsed.definition.steps[0]?.config, {});
+    assert.deepEqual(parsed.definition.steps[0]?.retry, {
+      maxAttempts: 1,
+      backoffMs: 0
+    });
+  });
+
+  it("rejects retry policies with invalid attempts", () => {
+    assert.throws(
+      () =>
+        workflowDefinitionSchema.parse({
+          steps: [
+            {
+              key: "start",
+              type: "noop",
+              retry: {
+                maxAttempts: 0
+              }
+            }
+          ]
+        }),
+      /Number must be greater than or equal to 1/
+    );
+  });
+
+  it("rejects retry policies with invalid backoff", () => {
+    assert.throws(
+      () =>
+        workflowDefinitionSchema.parse({
+          steps: [
+            {
+              key: "start",
+              type: "noop",
+              retry: {
+                backoffMs: -1
+              }
+            }
+          ]
+        }),
+      /Number must be greater than or equal to 0/
+    );
   });
 });
