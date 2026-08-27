@@ -66,9 +66,171 @@ describe("executeWorkflowStep", () => {
     );
   });
 
+  it("executes http steps", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    globalThis.fetch = async (url, init) => {
+      requests.push({
+        url: String(url),
+        init
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "request_123"
+        }
+      });
+    };
+
+    try {
+      const output = await executeWorkflowStep({
+        step: createStep({
+          type: "http",
+          config: {
+            url: "https://api.example.com/tasks",
+            method: "POST",
+            headers: {
+              authorization: "Bearer test-token"
+            },
+            body: {
+              taskId: "task_123"
+            },
+            timeoutMs: 5_000
+          }
+        }),
+        executionInput: {},
+        stepInput: {}
+      });
+
+      assert.deepEqual(requests, [
+        {
+          url: "https://api.example.com/tasks",
+          init: {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: "Bearer test-token"
+            },
+            body: JSON.stringify({
+              taskId: "task_123"
+            }),
+            signal: requests[0]?.init?.signal
+          }
+        }
+      ]);
+      assert.deepEqual(output, {
+        type: "http",
+        completed: true,
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "request_123"
+        },
+        body: {
+          ok: true
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("times out slow http steps", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+
+    try {
+      await assert.rejects(
+        executeWorkflowStep({
+          step: createStep({
+            type: "http",
+            config: {
+              url: "https://api.example.com/slow",
+              timeoutMs: 1
+            }
+          }),
+          executionInput: {},
+          stepInput: {}
+        }),
+        /HTTP step timed out after 1ms/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects invalid http timeout config", async () => {
+    await assert.rejects(
+      executeWorkflowStep({
+        step: createStep({
+          type: "http",
+          config: {
+            url: "https://api.example.com/tasks",
+            timeoutMs: 0
+          }
+        }),
+        executionInput: {},
+        stepInput: {}
+      }),
+      /HTTP step config\.timeoutMs/
+    );
+  });
+
+  it("rejects failed http responses", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () =>
+      new Response("server error", {
+        status: 500
+      });
+
+    try {
+      await assert.rejects(
+        executeWorkflowStep({
+          step: createStep({
+            type: "http",
+            config: {
+              url: "https://api.example.com/fail"
+            }
+          }),
+          executionInput: {},
+          stepInput: {}
+        }),
+        /HTTP step failed with status 500/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects invalid http config", async () => {
+    await assert.rejects(
+      executeWorkflowStep({
+        step: createStep({
+          type: "http",
+          config: {
+            url: "ftp://api.example.com/tasks"
+          }
+        }),
+        executionInput: {},
+        stepInput: {}
+      }),
+      /HTTP step config\.url/
+    );
+  });
+
   it("rejects unsupported step types", async () => {
     const step = createStep({
-      type: "http"
+      type: "email"
     });
 
     await assert.rejects(
