@@ -3,6 +3,7 @@ import { triggerExecutionRequestSchema } from "@execloom/contracts";
 import { z } from "zod";
 
 import {
+  cancelExecution,
   ExecutionServiceError,
   getExecution,
   triggerExecution
@@ -49,6 +50,26 @@ export function createExecutionRoutes() {
       const ownerId = parseOwnerId(req.header("x-user-id"));
       const executionId = uuidSchema.parse(req.params.id);
       const execution = await getExecution(ownerId, executionId);
+
+      res.json(execution);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          code: "VALIDATION_ERROR",
+          message: "Invalid execution id"
+        });
+        return;
+      }
+
+      handleExecutionError(error, res, next);
+    }
+  });
+
+  router.post("/executions/:id/cancel", async (req, res, next) => {
+    try {
+      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const executionId = uuidSchema.parse(req.params.id);
+      const execution = await cancelExecution(ownerId, executionId);
 
       res.json(execution);
     } catch (error) {

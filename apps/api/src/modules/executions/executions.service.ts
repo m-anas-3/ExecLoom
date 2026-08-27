@@ -5,7 +5,11 @@ import type {
   StepRunResponse,
   TriggerExecutionRequest
 } from "@execloom/contracts";
-import { getExecutionDetailByOwner, triggerExecutionForWorkflow } from "@execloom/db";
+import {
+  cancelExecutionByOwner,
+  getExecutionDetailByOwner,
+  triggerExecutionForWorkflow
+} from "@execloom/db";
 import { enqueueExecutionJob } from "@execloom/queue";
 
 type ExecutionDetailRecord = NonNullable<Awaited<ReturnType<typeof getExecutionDetailByOwner>>>;
@@ -80,6 +84,39 @@ export async function getExecution(
     execution: mapExecution(detail.execution),
     steps: detail.steps.map(mapStepRun),
     events: detail.events.map(mapExecutionEvent)
+  };
+}
+
+export async function cancelExecution(
+  ownerId: string,
+  executionId: string
+): Promise<ExecutionDetailResponse> {
+  const result = await cancelExecutionByOwner(executionId, ownerId);
+
+  if (result.kind === "execution_not_found") {
+    throw new ExecutionServiceError(404, "EXECUTION_NOT_FOUND", "Execution was not found");
+  }
+
+  if (result.kind === "execution_not_cancellable") {
+    throw new ExecutionServiceError(
+      409,
+      "EXECUTION_NOT_CANCELLABLE",
+      `Execution cannot be cancelled from status ${result.status}`
+    );
+  }
+
+  if (result.kind === "execution_cancel_lost") {
+    throw new ExecutionServiceError(
+      409,
+      "EXECUTION_CANCEL_LOST",
+      "Execution status changed before it could be cancelled"
+    );
+  }
+
+  return {
+    execution: mapExecution(result.execution),
+    steps: result.steps.map(mapStepRun),
+    events: result.events.map(mapExecutionEvent)
   };
 }
 

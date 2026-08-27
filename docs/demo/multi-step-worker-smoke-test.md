@@ -153,6 +153,21 @@ curl -sS -X POST http://localhost:4000/workflows/WORKFLOW_ID/executions \
 
 Copy `execution.id` from the response.
 
+## Optional: Cancel An Execution
+
+For a long-running execution, cancel it before the worker finishes:
+
+```bash
+curl -sS -X POST http://localhost:4000/executions/EXECUTION_ID/cancel \
+  -H "x-user-id: USER_ID"
+```
+
+Expected result:
+
+- `execution.status` is `cancelled`
+- active step rows are marked `cancelled`
+- events include `execution.cancelled`
+
 ## Check Execution Result
 
 Wait a moment, then run:

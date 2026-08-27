@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
   assertExecutionTransition,
   assertStepRunTransition
@@ -179,6 +179,143 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
       steps,
       events
     };
+  });
+}
+
+export async function cancelExecutionByOwner(executionId: string, ownerId: string) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [execution] = await tx
+        .select()
+        .from(executions)
+        .where(eq(executions.id, executionId))
+        .limit(1);
+
+      if (!execution) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      const [ownerMatch] = await tx
+        .select({
+          ownerId: workflows.ownerId
+        })
+        .from(workflowVersions)
+        .innerJoin(workflows, eq(workflowVersions.workflowId, workflows.id))
+        .where(
+          and(
+            eq(workflowVersions.id, execution.workflowVersionId),
+            eq(workflows.ownerId, ownerId)
+          )
+        )
+        .limit(1);
+
+      if (!ownerMatch) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      if (execution.status === "cancelled") {
+        const detail = await getExecutionTimeline(tx, execution);
+
+        return {
+          kind: "cancelled" as const,
+          ...detail
+        };
+      }
+
+      if (execution.status !== "queued" && execution.status !== "running") {
+        return {
+          kind: "execution_not_cancellable" as const,
+          status: execution.status
+        };
+      }
+
+      assertExecutionTransition(execution.status, "cancelled");
+
+      const activeSteps = await tx
+        .select()
+        .from(stepRuns)
+        .where(
+          and(
+            eq(stepRuns.executionId, execution.id),
+            inArray(stepRuns.status, cancellableStepRunStatuses)
+          )
+        )
+        .orderBy(asc(stepRuns.createdAt));
+
+      for (const stepRun of activeSteps) {
+        assertStepRunTransition(stepRun.status, "cancelled");
+      }
+
+      const cancelledAt = new Date();
+      const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+      const [cancelledExecution] = await tx
+        .update(executions)
+        .set({
+          status: "cancelled",
+          endedAt: cancelledAt
+        })
+        .where(
+          and(
+            eq(executions.id, execution.id),
+            inArray(executions.status, cancellableExecutionStatuses)
+          )
+        )
+        .returning();
+
+      if (!cancelledExecution) {
+        return { kind: "execution_cancel_lost" as const };
+      }
+
+      const cancelledSteps =
+        activeSteps.length > 0
+          ? await tx
+              .update(stepRuns)
+              .set({
+                status: "cancelled",
+                endedAt: cancelledAt
+              })
+              .where(
+                and(
+                  eq(stepRuns.executionId, execution.id),
+                  inArray(stepRuns.status, cancellableStepRunStatuses)
+                )
+              )
+              .returning()
+          : [];
+
+      const stepEvents: ExecutionEventInsert[] = cancelledSteps.map((stepRun, index) => ({
+        executionId: execution.id,
+        sequenceNo: nextSequenceNo + index,
+        type: "step.cancelled",
+        payloadJson: {
+          executionId: execution.id,
+          stepRunId: stepRun.id,
+          stepKey: stepRun.stepKey,
+          attemptNo: stepRun.attemptCount
+        }
+      }));
+
+      await tx.insert(executionEvents).values([
+        ...stepEvents,
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo + stepEvents.length,
+          type: "execution.cancelled",
+          payloadJson: {
+            executionId: execution.id,
+            status: cancelledExecution.status
+          }
+        }
+      ]);
+
+      const detail = await getExecutionTimeline(tx, cancelledExecution);
+
+      return {
+        kind: "cancelled" as const,
+        ...detail
+      };
+    });
   });
 }
 
@@ -718,6 +855,9 @@ const defaultStepRetryPolicy: WorkflowStepRetryPolicyRecord = {
   backoffMs: 0
 };
 
+const cancellableExecutionStatuses = ["queued", "running"] as const;
+const cancellableStepRunStatuses = ["pending", "queued", "running", "retrying"] as const;
+
 function getStepRetryPolicy(value: unknown): WorkflowStepRetryPolicyRecord {
   if (!isJsonObject(value)) {
     return defaultStepRetryPolicy;
@@ -757,4 +897,27 @@ async function getNextEventSequenceNo(
     .where(eq(executionEvents.executionId, executionId));
 
   return Number(eventSequence?.maxSequenceNo ?? 0) + 1;
+}
+
+async function getExecutionTimeline(
+  tx: DatabaseTransaction,
+  execution: typeof executions.$inferSelect
+) {
+  const steps = await tx
+    .select()
+    .from(stepRuns)
+    .where(eq(stepRuns.executionId, execution.id))
+    .orderBy(asc(stepRuns.createdAt));
+
+  const events = await tx
+    .select()
+    .from(executionEvents)
+    .where(eq(executionEvents.executionId, execution.id))
+    .orderBy(asc(executionEvents.sequenceNo));
+
+  return {
+    execution,
+    steps,
+    events
+  };
 }
