@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
+export const workflowStepTypeSchema = z.enum(["noop", "delay"]);
 
 export const healthResponseSchema = z.object({
   service: z.string(),
@@ -16,7 +17,7 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
 export const workflowStepDefinitionSchema = z.object({
   key: z.string().min(1).max(80),
-  type: z.string().min(1).max(80),
+  type: workflowStepTypeSchema,
   name: z.string().min(1).max(120).optional(),
   config: jsonObjectSchema.default({})
 });
@@ -61,7 +62,70 @@ export const workflowDetailResponseSchema = z.object({
   versions: z.array(workflowVersionResponseSchema)
 });
 
+export const triggerExecutionRequestSchema = z.object({
+  input: jsonObjectSchema.default({})
+});
+
+export const executionResponseSchema = z.object({
+  id: z.string().uuid(),
+  workflowVersionId: z.string().uuid(),
+  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  triggerType: z.string(),
+  input: jsonObjectSchema,
+  output: z.unknown().nullable(),
+  error: z.unknown().nullable(),
+  createdAt: z.string().datetime(),
+  queuedAt: z.string().datetime(),
+  startedAt: z.string().datetime().nullable(),
+  endedAt: z.string().datetime().nullable()
+});
+
+export const stepRunResponseSchema = z.object({
+  id: z.string().uuid(),
+  executionId: z.string().uuid(),
+  stepKey: z.string(),
+  status: z.enum([
+    "pending",
+    "queued",
+    "running",
+    "succeeded",
+    "retrying",
+    "failed",
+    "skipped",
+    "cancelled"
+  ]),
+  attemptCount: z.number().int(),
+  input: z.unknown().nullable(),
+  output: z.unknown().nullable(),
+  error: z.unknown().nullable(),
+  createdAt: z.string().datetime(),
+  queuedAt: z.string().datetime().nullable(),
+  startedAt: z.string().datetime().nullable(),
+  endedAt: z.string().datetime().nullable()
+});
+
+export const executionEventResponseSchema = z.object({
+  id: z.string().uuid(),
+  executionId: z.string().uuid(),
+  sequenceNo: z.number().int(),
+  type: z.string(),
+  payload: jsonObjectSchema,
+  createdAt: z.string().datetime()
+});
+
+export const executionDetailResponseSchema = z.object({
+  execution: executionResponseSchema,
+  steps: z.array(stepRunResponseSchema),
+  events: z.array(executionEventResponseSchema)
+});
+
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
+export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;
+export type TriggerExecutionRequest = z.infer<typeof triggerExecutionRequestSchema>;
+export type ExecutionResponse = z.infer<typeof executionResponseSchema>;
+export type StepRunResponse = z.infer<typeof stepRunResponseSchema>;
+export type ExecutionEventResponse = z.infer<typeof executionEventResponseSchema>;
+export type ExecutionDetailResponse = z.infer<typeof executionDetailResponseSchema>;

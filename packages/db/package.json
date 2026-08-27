@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@execloom/config": "workspace:*",
+    "@execloom/workflow-core": "workspace:*",
     "drizzle-orm": "^0.44.5",
     "postgres": "^3.4.7"
   },
