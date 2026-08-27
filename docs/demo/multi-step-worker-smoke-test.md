@@ -54,6 +54,8 @@ Use the returned `id` as `USER_ID`.
 
 ## Create A Multi-Step Workflow
 
+This example uses only local worker step types, so it does not need an external API.
+
 ```bash
 curl -sS -X POST http://localhost:4000/workflows \
   -H "content-type: application/json" \
@@ -86,6 +88,48 @@ curl -sS -X POST http://localhost:4000/workflows \
 ```
 
 Copy `workflow.id` from the response.
+
+## Optional HTTP Step Workflow
+
+Use this version when you want to test the HTTP executor against a public test endpoint.
+
+```bash
+curl -sS -X POST http://localhost:4000/workflows \
+  -H "content-type: application/json" \
+  -H "x-user-id: USER_ID" \
+  -d '{
+    "name": "HTTP step demo",
+    "inputSchema": {},
+    "definition": {
+      "steps": [
+        {
+          "key": "start",
+          "type": "noop",
+          "config": {}
+        },
+        {
+          "key": "call_api",
+          "type": "http",
+          "config": {
+            "url": "https://httpbin.org/post",
+            "method": "POST",
+            "body": {
+              "source": "execloom-smoke-test"
+            },
+            "timeoutMs": 10000
+          }
+        },
+        {
+          "key": "finish",
+          "type": "noop",
+          "config": {}
+        }
+      ]
+    }
+  }'
+```
+
+Copy `workflow.id` from the response and continue with the same publish and trigger steps below.
 
 ## Publish The Workflow
 
@@ -123,4 +167,3 @@ Expected result:
 - `execution.status` is `succeeded`
 - `steps` has 3 rows
 - events include `execution.started`, `step.started`, `step.succeeded`, `step.queued`, and `execution.completed`
-

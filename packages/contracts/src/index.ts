@@ -1,7 +1,33 @@
 import { z } from "zod";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
-export const workflowStepTypeSchema = z.enum(["noop", "delay"]);
+export const workflowStepTypeSchema = z.enum(["noop", "delay", "http"]);
+export const httpStepMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
+const workflowStepBaseSchema = z.object({
+  key: z.string().min(1).max(80),
+  name: z.string().min(1).max(120).optional()
+});
+
+export const noopStepConfigSchema = jsonObjectSchema.default({});
+export const delayStepConfigSchema = z
+  .object({
+    ms: z.number().int().min(0).max(30_000).optional()
+  })
+  .default({});
+export const httpStepConfigSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .refine(
+      (value) => value.startsWith("http://") || value.startsWith("https://"),
+      "URL must use http or https"
+    ),
+  method: httpStepMethodSchema.default("GET"),
+  headers: z.record(z.string()).default({}),
+  body: z.unknown().optional(),
+  timeoutMs: z.number().int().min(1).max(60_000).default(10_000)
+});
 
 export const healthResponseSchema = z.object({
   service: z.string(),
@@ -15,12 +41,20 @@ export const healthResponseSchema = z.object({
 
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
-export const workflowStepDefinitionSchema = z.object({
-  key: z.string().min(1).max(80),
-  type: workflowStepTypeSchema,
-  name: z.string().min(1).max(120).optional(),
-  config: jsonObjectSchema.default({})
-});
+export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
+  workflowStepBaseSchema.extend({
+    type: z.literal("noop"),
+    config: noopStepConfigSchema
+  }),
+  workflowStepBaseSchema.extend({
+    type: z.literal("delay"),
+    config: delayStepConfigSchema
+  }),
+  workflowStepBaseSchema.extend({
+    type: z.literal("http"),
+    config: httpStepConfigSchema
+  })
+]);
 
 export const workflowDefinitionSchema = z.object({
   steps: z.array(workflowStepDefinitionSchema).min(1).max(50)
@@ -121,6 +155,7 @@ export const executionDetailResponseSchema = z.object({
 
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
+export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;
