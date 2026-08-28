@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   assertExecutionTransition,
   assertStepRunTransition
@@ -19,7 +19,13 @@ type WorkflowDefinition = {
     type?: unknown;
     name?: unknown;
     config?: unknown;
+    retry?: unknown;
   }>;
+};
+
+export type WorkflowStepRetryPolicyRecord = {
+  maxAttempts: number;
+  backoffMs: number;
 };
 
 export type WorkflowStepDefinitionRecord = {
@@ -27,6 +33,7 @@ export type WorkflowStepDefinitionRecord = {
   type: string;
   name?: string;
   config: Record<string, unknown>;
+  retry: WorkflowStepRetryPolicyRecord;
 };
 
 type DatabaseTransaction = Parameters<Parameters<DatabaseClient["db"]["transaction"]>[0]>[0];
@@ -37,6 +44,31 @@ export type TriggerExecutionRecordInput = {
   workflowId: string;
   inputJson: unknown;
 };
+
+export type RecoverStalledExecutionStepsInput = {
+  stalledBefore: Date;
+  limit?: number;
+};
+
+export type StalledExecutionStepRecoveryRecord =
+  | {
+      kind: "retry_queued";
+      executionId: string;
+      workflowVersionId: string;
+      stepRunId: string;
+      retryDelayMs: number;
+    }
+  | {
+      kind: "failed";
+      executionId: string;
+      workflowVersionId: string;
+      stepRunId: string;
+    }
+  | {
+      kind: "step_recovery_lost";
+      executionId: string;
+      stepRunId: string;
+    };
 
 export async function triggerExecutionForWorkflow(input: TriggerExecutionRecordInput) {
   return withDatabase(async ({ db }) => {
@@ -175,6 +207,143 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
   });
 }
 
+export async function cancelExecutionByOwner(executionId: string, ownerId: string) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [execution] = await tx
+        .select()
+        .from(executions)
+        .where(eq(executions.id, executionId))
+        .limit(1);
+
+      if (!execution) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      const [ownerMatch] = await tx
+        .select({
+          ownerId: workflows.ownerId
+        })
+        .from(workflowVersions)
+        .innerJoin(workflows, eq(workflowVersions.workflowId, workflows.id))
+        .where(
+          and(
+            eq(workflowVersions.id, execution.workflowVersionId),
+            eq(workflows.ownerId, ownerId)
+          )
+        )
+        .limit(1);
+
+      if (!ownerMatch) {
+        return { kind: "execution_not_found" as const };
+      }
+
+      if (execution.status === "cancelled") {
+        const detail = await getExecutionTimeline(tx, execution);
+
+        return {
+          kind: "cancelled" as const,
+          ...detail
+        };
+      }
+
+      if (execution.status !== "queued" && execution.status !== "running") {
+        return {
+          kind: "execution_not_cancellable" as const,
+          status: execution.status
+        };
+      }
+
+      assertExecutionTransition(execution.status, "cancelled");
+
+      const activeSteps = await tx
+        .select()
+        .from(stepRuns)
+        .where(
+          and(
+            eq(stepRuns.executionId, execution.id),
+            inArray(stepRuns.status, cancellableStepRunStatuses)
+          )
+        )
+        .orderBy(asc(stepRuns.createdAt));
+
+      for (const stepRun of activeSteps) {
+        assertStepRunTransition(stepRun.status, "cancelled");
+      }
+
+      const cancelledAt = new Date();
+      const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+      const [cancelledExecution] = await tx
+        .update(executions)
+        .set({
+          status: "cancelled",
+          endedAt: cancelledAt
+        })
+        .where(
+          and(
+            eq(executions.id, execution.id),
+            inArray(executions.status, cancellableExecutionStatuses)
+          )
+        )
+        .returning();
+
+      if (!cancelledExecution) {
+        return { kind: "execution_cancel_lost" as const };
+      }
+
+      const cancelledSteps =
+        activeSteps.length > 0
+          ? await tx
+              .update(stepRuns)
+              .set({
+                status: "cancelled",
+                endedAt: cancelledAt
+              })
+              .where(
+                and(
+                  eq(stepRuns.executionId, execution.id),
+                  inArray(stepRuns.status, cancellableStepRunStatuses)
+                )
+              )
+              .returning()
+          : [];
+
+      const stepEvents: ExecutionEventInsert[] = cancelledSteps.map((stepRun, index) => ({
+        executionId: execution.id,
+        sequenceNo: nextSequenceNo + index,
+        type: "step.cancelled",
+        payloadJson: {
+          executionId: execution.id,
+          stepRunId: stepRun.id,
+          stepKey: stepRun.stepKey,
+          attemptNo: stepRun.attemptCount
+        }
+      }));
+
+      await tx.insert(executionEvents).values([
+        ...stepEvents,
+        {
+          executionId: execution.id,
+          sequenceNo: nextSequenceNo + stepEvents.length,
+          type: "execution.cancelled",
+          payloadJson: {
+            executionId: execution.id,
+            status: cancelledExecution.status
+          }
+        }
+      ]);
+
+      const detail = await getExecutionTimeline(tx, cancelledExecution);
+
+      return {
+        kind: "cancelled" as const,
+        ...detail
+      };
+    });
+  });
+}
+
 export async function claimQueuedExecutionStep(executionId: string) {
   return withDatabase(async ({ db }) => {
     return db.transaction(async (tx) => {
@@ -264,6 +433,7 @@ export async function claimQueuedExecutionStep(executionId: string) {
         .set({
           status: "running",
           attemptCount: stepRun.attemptCount + 1,
+          errorJson: null,
           startedAt: now
         })
         .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "queued")))
@@ -356,6 +526,7 @@ export async function completeClaimedExecutionStep(input: {
         .set({
           status: "succeeded",
           outputJson: input.outputJson,
+          errorJson: null,
           endedAt: completedAt
         })
         .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
@@ -468,10 +639,11 @@ export async function completeClaimedExecutionStep(input: {
   });
 }
 
-export async function failClaimedExecutionStep(input: {
+export async function failOrRetryClaimedExecutionStep(input: {
   executionId: string;
   stepRunId: string;
   errorJson: unknown;
+  retryPolicy: WorkflowStepRetryPolicyRecord;
 }) {
   return withDatabase(async ({ db }) => {
     return db.transaction(async (tx) => {
@@ -501,6 +673,77 @@ export async function failClaimedExecutionStep(input: {
 
       if (stepRun.status !== "running") {
         return { kind: "step_not_failable" as const, status: stepRun.status };
+      }
+
+      if (stepRun.attemptCount < input.retryPolicy.maxAttempts) {
+        assertStepRunTransition(stepRun.status, "retrying");
+        assertStepRunTransition("retrying", "queued");
+
+        const retryAt = new Date();
+        const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
+
+        const [retryingStep] = await tx
+          .update(stepRuns)
+          .set({
+            status: "retrying",
+            errorJson: input.errorJson
+          })
+          .where(and(eq(stepRuns.id, stepRun.id), eq(stepRuns.status, "running")))
+          .returning();
+
+        if (!retryingStep) {
+          throw new Error("Failed to mark claimed step as retrying");
+        }
+
+        const [queuedStep] = await tx
+          .update(stepRuns)
+          .set({
+            status: "queued",
+            queuedAt: retryAt,
+            startedAt: null,
+            endedAt: null
+          })
+          .where(and(eq(stepRuns.id, retryingStep.id), eq(stepRuns.status, "retrying")))
+          .returning();
+
+        if (!queuedStep) {
+          throw new Error("Failed to requeue failed step");
+        }
+
+        await tx.insert(executionEvents).values([
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo,
+            type: "step.retrying",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: queuedStep.id,
+              stepKey: queuedStep.stepKey,
+              attemptNo: stepRun.attemptCount,
+              maxAttempts: input.retryPolicy.maxAttempts,
+              backoffMs: input.retryPolicy.backoffMs,
+              error: input.errorJson
+            }
+          },
+          {
+            executionId: execution.id,
+            sequenceNo: nextSequenceNo + 1,
+            type: "step.queued",
+            payloadJson: {
+              executionId: execution.id,
+              stepRunId: queuedStep.id,
+              stepKey: queuedStep.stepKey,
+              reason: "retry"
+            }
+          }
+        ]);
+
+        return {
+          kind: "retry_queued" as const,
+          execution,
+          stepRun: queuedStep,
+          retryDelayMs: input.retryPolicy.backoffMs
+        };
       }
 
       assertStepRunTransition(stepRun.status, "failed");
@@ -570,6 +813,211 @@ export async function failClaimedExecutionStep(input: {
   });
 }
 
+export async function failClaimedExecutionStep(input: {
+  executionId: string;
+  stepRunId: string;
+  errorJson: unknown;
+}) {
+  return failOrRetryClaimedExecutionStep({
+    ...input,
+    retryPolicy: defaultStepRetryPolicy
+  });
+}
+
+export async function recoverStalledExecutionSteps(
+  input: RecoverStalledExecutionStepsInput
+): Promise<StalledExecutionStepRecoveryRecord[]> {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const stalledSteps = await tx
+        .select({
+          execution: executions,
+          stepRun: stepRuns,
+          definitionJson: workflowVersions.definitionJson
+        })
+        .from(stepRuns)
+        .innerJoin(executions, eq(stepRuns.executionId, executions.id))
+        .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
+        .where(
+          and(
+            eq(executions.status, "running"),
+            eq(stepRuns.status, "running"),
+            lte(stepRuns.startedAt, input.stalledBefore)
+          )
+        )
+        .orderBy(asc(stepRuns.startedAt))
+        .limit(input.limit ?? 25);
+
+      const results: StalledExecutionStepRecoveryRecord[] = [];
+
+      for (const stalled of stalledSteps) {
+        const stepDefinition = getStepDefinition(
+          stalled.definitionJson,
+          stalled.stepRun.stepKey
+        );
+        const retryPolicy = stepDefinition?.retry ?? defaultStepRetryPolicy;
+        const errorJson = {
+          message: "Step recovered after worker timeout",
+          stepRunId: stalled.stepRun.id,
+          stepKey: stalled.stepRun.stepKey,
+          startedAt: stalled.stepRun.startedAt?.toISOString() ?? null,
+          stalledBefore: input.stalledBefore.toISOString()
+        };
+
+        if (stalled.stepRun.attemptCount < retryPolicy.maxAttempts) {
+          assertStepRunTransition(stalled.stepRun.status, "retrying");
+          assertStepRunTransition("retrying", "queued");
+
+          const retryAt = new Date();
+          const nextSequenceNo = await getNextEventSequenceNo(tx, stalled.execution.id);
+
+          const [retryingStep] = await tx
+            .update(stepRuns)
+            .set({
+              status: "retrying",
+              errorJson
+            })
+            .where(and(eq(stepRuns.id, stalled.stepRun.id), eq(stepRuns.status, "running")))
+            .returning();
+
+          if (!retryingStep) {
+            results.push({
+              kind: "step_recovery_lost" as const,
+              executionId: stalled.execution.id,
+              stepRunId: stalled.stepRun.id
+            });
+            continue;
+          }
+
+          const [queuedStep] = await tx
+            .update(stepRuns)
+            .set({
+              status: "queued",
+              queuedAt: retryAt,
+              startedAt: null,
+              endedAt: null
+            })
+            .where(and(eq(stepRuns.id, retryingStep.id), eq(stepRuns.status, "retrying")))
+            .returning();
+
+          if (!queuedStep) {
+            throw new Error("Failed to requeue recovered step");
+          }
+
+          await tx.insert(executionEvents).values([
+            {
+              executionId: stalled.execution.id,
+              sequenceNo: nextSequenceNo,
+              type: "step.recovered",
+              payloadJson: {
+                executionId: stalled.execution.id,
+                stepRunId: queuedStep.id,
+                stepKey: queuedStep.stepKey,
+                attemptNo: stalled.stepRun.attemptCount,
+                maxAttempts: retryPolicy.maxAttempts,
+                backoffMs: retryPolicy.backoffMs,
+                error: errorJson
+              }
+            },
+            {
+              executionId: stalled.execution.id,
+              sequenceNo: nextSequenceNo + 1,
+              type: "step.queued",
+              payloadJson: {
+                executionId: stalled.execution.id,
+                stepRunId: queuedStep.id,
+                stepKey: queuedStep.stepKey,
+                reason: "recovery"
+              }
+            }
+          ]);
+
+          results.push({
+            kind: "retry_queued" as const,
+            executionId: stalled.execution.id,
+            workflowVersionId: stalled.execution.workflowVersionId,
+            stepRunId: queuedStep.id,
+            retryDelayMs: retryPolicy.backoffMs
+          });
+          continue;
+        }
+
+        assertStepRunTransition(stalled.stepRun.status, "failed");
+        assertExecutionTransition(stalled.execution.status, "failed");
+
+        const failedAt = new Date();
+        const nextSequenceNo = await getNextEventSequenceNo(tx, stalled.execution.id);
+
+        const [failedStep] = await tx
+          .update(stepRuns)
+          .set({
+            status: "failed",
+            errorJson,
+            endedAt: failedAt
+          })
+          .where(and(eq(stepRuns.id, stalled.stepRun.id), eq(stepRuns.status, "running")))
+          .returning();
+
+        if (!failedStep) {
+          results.push({
+            kind: "step_recovery_lost" as const,
+            executionId: stalled.execution.id,
+            stepRunId: stalled.stepRun.id
+          });
+          continue;
+        }
+
+        const [failedExecution] = await tx
+          .update(executions)
+          .set({
+            status: "failed",
+            errorJson,
+            endedAt: failedAt
+          })
+          .where(and(eq(executions.id, stalled.execution.id), eq(executions.status, "running")))
+          .returning();
+
+        if (!failedExecution) {
+          throw new Error("Failed to fail recovered execution");
+        }
+
+        await tx.insert(executionEvents).values([
+          {
+            executionId: stalled.execution.id,
+            sequenceNo: nextSequenceNo,
+            type: "step.failed",
+            payloadJson: {
+              executionId: stalled.execution.id,
+              stepRunId: failedStep.id,
+              stepKey: failedStep.stepKey,
+              attemptNo: failedStep.attemptCount,
+              error: errorJson
+            }
+          },
+          {
+            executionId: stalled.execution.id,
+            sequenceNo: nextSequenceNo + 1,
+            type: "execution.failed",
+            payloadJson: {
+              executionId: stalled.execution.id,
+              error: errorJson
+            }
+          }
+        ]);
+
+        results.push({
+          kind: "failed" as const,
+          executionId: failedExecution.id,
+          workflowVersionId: failedExecution.workflowVersionId,
+          stepRunId: failedStep.id
+        });
+      }
+
+      return results;
+    });
+  });
+}
+
 function getFirstStepKey(definitionJson: unknown): string | null {
   const definition = definitionJson as WorkflowDefinition;
   const firstStepKey = definition.steps?.[0]?.key;
@@ -592,7 +1040,8 @@ function getStepDefinition(
     key: step.key,
     type: step.type,
     name: typeof step.name === "string" ? step.name : undefined,
-    config: isJsonObject(step.config) ? step.config : {}
+    config: isJsonObject(step.config) ? step.config : {},
+    retry: getStepRetryPolicy(step.retry)
   };
 }
 
@@ -620,6 +1069,41 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const defaultStepRetryPolicy: WorkflowStepRetryPolicyRecord = {
+  maxAttempts: 1,
+  backoffMs: 0
+};
+
+const cancellableExecutionStatuses = ["queued", "running"] as const;
+const cancellableStepRunStatuses = ["pending", "queued", "running", "retrying"] as const;
+
+function getStepRetryPolicy(value: unknown): WorkflowStepRetryPolicyRecord {
+  if (!isJsonObject(value)) {
+    return defaultStepRetryPolicy;
+  }
+
+  const maxAttempts =
+    typeof value.maxAttempts === "number" &&
+    Number.isInteger(value.maxAttempts) &&
+    value.maxAttempts >= 1 &&
+    value.maxAttempts <= 10
+      ? value.maxAttempts
+      : defaultStepRetryPolicy.maxAttempts;
+
+  const backoffMs =
+    typeof value.backoffMs === "number" &&
+    Number.isInteger(value.backoffMs) &&
+    value.backoffMs >= 0 &&
+    value.backoffMs <= 300_000
+      ? value.backoffMs
+      : defaultStepRetryPolicy.backoffMs;
+
+  return {
+    maxAttempts,
+    backoffMs
+  };
+}
+
 async function getNextEventSequenceNo(
   tx: DatabaseTransaction,
   executionId: string
@@ -632,4 +1116,27 @@ async function getNextEventSequenceNo(
     .where(eq(executionEvents.executionId, executionId));
 
   return Number(eventSequence?.maxSequenceNo ?? 0) + 1;
+}
+
+async function getExecutionTimeline(
+  tx: DatabaseTransaction,
+  execution: typeof executions.$inferSelect
+) {
+  const steps = await tx
+    .select()
+    .from(stepRuns)
+    .where(eq(stepRuns.executionId, execution.id))
+    .orderBy(asc(stepRuns.createdAt));
+
+  const events = await tx
+    .select()
+    .from(executionEvents)
+    .where(eq(executionEvents.executionId, execution.id))
+    .orderBy(asc(executionEvents.sequenceNo));
+
+  return {
+    execution,
+    steps,
+    events
+  };
 }

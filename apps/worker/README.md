@@ -53,3 +53,33 @@ Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and 
 ```
 
 HTTP steps fail when the response is not `2xx` or the request exceeds `timeoutMs`.
+
+## Step Retries
+
+Every step defaults to one attempt. Add `retry` when a failed step should be queued again before the execution is marked failed.
+
+```json
+{
+  "key": "notify",
+  "type": "http",
+  "retry": {
+    "maxAttempts": 3,
+    "backoffMs": 2000
+  },
+  "config": {
+    "url": "https://example.com/webhook",
+    "method": "POST"
+  }
+}
+```
+
+Use retries only for idempotent steps or external APIs that can safely handle duplicate requests.
+
+## Stalled Step Recovery
+
+The worker periodically scans PostgreSQL for old `running` step runs. If a worker process crashed mid-step, recovery either queues that step again when retry attempts remain or marks the execution failed when attempts are exhausted.
+
+Relevant environment variables:
+
+- `WORKER_STALLED_STEP_TIMEOUT_MS`: how old a `running` step must be before recovery handles it
+- `WORKER_RECOVERY_INTERVAL_MS`: how often the worker scans for stalled steps

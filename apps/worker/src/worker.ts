@@ -6,7 +6,8 @@ import { loadConfig } from "@execloom/config";
 import {
   claimQueuedExecutionStep,
   completeClaimedExecutionStep,
-  failClaimedExecutionStep
+  failOrRetryClaimedExecutionStep,
+  recoverStalledExecutionSteps
 } from "@execloom/db";
 import {
   createRedisConnectionOptions,
@@ -58,11 +59,34 @@ const executionWorker = new BullWorker(
         stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson
       });
     } catch (error) {
-      const failure = await failClaimedExecutionStep({
+      const failure = await failOrRetryClaimedExecutionStep({
         executionId: claim.execution.id,
         stepRunId: claim.stepRun.id,
-        errorJson: serializeError(error)
+        errorJson: serializeError(error),
+        retryPolicy: claim.stepDefinition.retry
       });
+
+      if (failure.kind === "retry_queued") {
+        await enqueueExecutionJob(
+          {
+            executionId: claim.execution.id,
+            workflowVersionId: claim.execution.workflowVersionId
+          },
+          {
+            jobId: `${claim.execution.id}:${claim.stepRun.id}:attempt-${failure.stepRun.attemptCount + 1}`,
+            delay: failure.retryDelayMs
+          }
+        );
+
+        console.warn("Execution step retry queued", {
+          executionId: payload.executionId,
+          stepRunId: failure.stepRun.id,
+          retryDelayMs: failure.retryDelayMs,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+
+        return;
+      }
 
       console.error("Execution job failed during step execution", {
         executionId: payload.executionId,
@@ -101,6 +125,14 @@ const executionWorker = new BullWorker(
   }
 );
 
+let recoveryRunning = false;
+
+const recoveryTimer = setInterval(() => {
+  void recoverStalledSteps();
+}, config.WORKER_RECOVERY_INTERVAL_MS);
+recoveryTimer.unref();
+void recoverStalledSteps();
+
 executionWorker.on("ready", () => {
   console.log("Execution worker ready", {
     queue: executionQueueName
@@ -122,6 +154,7 @@ executionWorker.on("failed", (job, error) => {
 
 async function shutdown() {
   console.log("Worker shutting down");
+  clearInterval(recoveryTimer);
   await executionWorker.close();
 }
 
@@ -146,4 +179,49 @@ function serializeError(error: unknown) {
     message: "Unknown error",
     value: error
   };
+}
+
+async function recoverStalledSteps() {
+  if (recoveryRunning) {
+    return;
+  }
+
+  recoveryRunning = true;
+
+  try {
+    const stalledBefore = new Date(Date.now() - config.WORKER_STALLED_STEP_TIMEOUT_MS);
+    const recoveries = await recoverStalledExecutionSteps({
+      stalledBefore
+    });
+
+    for (const recovery of recoveries) {
+      if (recovery.kind !== "retry_queued") {
+        continue;
+      }
+
+      await enqueueExecutionJob(
+        {
+          executionId: recovery.executionId,
+          workflowVersionId: recovery.workflowVersionId
+        },
+        {
+          jobId: `${recovery.executionId}:${recovery.stepRunId}:recovered-${Date.now()}`,
+          delay: recovery.retryDelayMs
+        }
+      );
+    }
+
+    if (recoveries.length > 0) {
+      console.warn("Recovered stalled execution steps", {
+        count: recoveries.length,
+        stalledBefore: stalledBefore.toISOString()
+      });
+    }
+  } catch (error) {
+    console.error("Failed to recover stalled execution steps", {
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  } finally {
+    recoveryRunning = false;
+  }
 }

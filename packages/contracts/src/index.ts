@@ -6,7 +6,16 @@ export const httpStepMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELE
 
 const workflowStepBaseSchema = z.object({
   key: z.string().min(1).max(80),
-  name: z.string().min(1).max(120).optional()
+  name: z.string().min(1).max(120).optional(),
+  retry: z
+    .object({
+      maxAttempts: z.number().int().min(1).max(10).default(1),
+      backoffMs: z.number().int().min(0).max(300_000).default(0)
+    })
+    .default({
+      maxAttempts: 1,
+      backoffMs: 0
+    })
 });
 
 export const noopStepConfigSchema = jsonObjectSchema.default({});
@@ -156,6 +165,7 @@ export const executionDetailResponseSchema = z.object({
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
+export type WorkflowStepDefinition = z.infer<typeof workflowStepDefinitionSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;
