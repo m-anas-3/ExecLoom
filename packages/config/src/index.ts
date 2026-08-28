@@ -6,7 +6,9 @@ const envSchema = z.object({
     .default("development"),
   API_PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().url(),
-  REDIS_URL: z.string().url()
+  REDIS_URL: z.string().url(),
+  WORKER_STALLED_STEP_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+  WORKER_RECOVERY_INTERVAL_MS: z.coerce.number().int().positive().default(60_000)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
