@@ -17,7 +17,7 @@ export function createWorkflowRoutes() {
 
   router.post("/", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const body = createWorkflowRequestSchema.safeParse(req.body);
 
       if (!body.success) {
@@ -39,7 +39,7 @@ export function createWorkflowRoutes() {
 
   router.get("/", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const workflows = await listWorkflows(ownerId);
 
       res.json({ workflows });
@@ -50,7 +50,7 @@ export function createWorkflowRoutes() {
 
   router.post("/:id/publish", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const workflowId = uuidSchema.parse(req.params.id);
       const workflow = await publishWorkflow(ownerId, workflowId);
 
@@ -70,7 +70,7 @@ export function createWorkflowRoutes() {
 
   router.get("/:id", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const workflowId = uuidSchema.parse(req.params.id);
       const workflow = await getWorkflow(ownerId, workflowId);
 
@@ -89,20 +89,6 @@ export function createWorkflowRoutes() {
   });
 
   return router;
-}
-
-function parseOwnerId(value: string | undefined): string {
-  const parsed = uuidSchema.safeParse(value);
-
-  if (!parsed.success) {
-    throw new WorkflowServiceError(
-      401,
-      "MISSING_OWNER",
-      "Provide a valid x-user-id header until auth is implemented"
-    );
-  }
-
-  return parsed.data;
 }
 
 function handleWorkflowError(

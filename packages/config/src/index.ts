@@ -5,6 +5,8 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   API_PORT: z.coerce.number().int().positive().default(4000),
+  AUTH_JWT_SECRET: z.string().min(32).default("local-development-jwt-secret-change-me"),
+  AUTH_ACCESS_TOKEN_TTL: z.string().min(1).default("7d"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   WORKER_STALLED_STEP_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),

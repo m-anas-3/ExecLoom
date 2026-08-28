@@ -50,6 +50,28 @@ export const healthResponseSchema = z.object({
 
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
+export const authUserResponseSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  createdAt: z.string().datetime()
+});
+
+export const registerRequestSchema = z.object({
+  email: z.string().email().max(255).transform((value) => value.toLowerCase()),
+  password: z.string().min(8).max(128)
+});
+
+export const loginRequestSchema = z.object({
+  email: z.string().email().max(255).transform((value) => value.toLowerCase()),
+  password: z.string().min(1).max(128)
+});
+
+export const authResponseSchema = z.object({
+  accessToken: z.string(),
+  tokenType: z.literal("Bearer"),
+  user: authUserResponseSchema
+});
+
 export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
   workflowStepBaseSchema.extend({
     type: z.literal("noop"),
@@ -163,6 +185,10 @@ export const executionDetailResponseSchema = z.object({
 });
 
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
+export type RegisterRequest = z.infer<typeof registerRequestSchema>;
+export type LoginRequest = z.infer<typeof loginRequestSchema>;
+export type AuthUserResponse = z.infer<typeof authUserResponseSchema>;
+export type AuthResponse = z.infer<typeof authResponseSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
 export type WorkflowStepDefinition = z.infer<typeof workflowStepDefinitionSchema>;

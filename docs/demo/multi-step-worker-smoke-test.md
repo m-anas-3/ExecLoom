@@ -34,23 +34,20 @@ Start the worker in another terminal:
 pnpm dev:worker
 ```
 
-## Create A Test User
+## Register A Test User
 
-Until auth exists, the API expects an `x-user-id` header. Create a local user directly in Postgres:
+Create a local user through the API:
 
 ```bash
-docker exec -it execloom-postgres psql -U execloom -d execloom
+curl -sS -X POST http://localhost:4000/auth/register \
+  -H "content-type: application/json" \
+  -d '{
+    "email": "demo@example.com",
+    "password": "local-dev-password"
+  }'
 ```
 
-Inside `psql`:
-
-```sql
-insert into users (email, password_hash)
-values ('demo@example.com', 'local-dev-password')
-returning id;
-```
-
-Use the returned `id` as `USER_ID`.
+Copy `accessToken` from the response and use it as `ACCESS_TOKEN`.
 
 ## Create A Multi-Step Workflow
 
@@ -59,7 +56,7 @@ This example uses only local worker step types, so it does not need an external 
 ```bash
 curl -sS -X POST http://localhost:4000/workflows \
   -H "content-type: application/json" \
-  -H "x-user-id: USER_ID" \
+  -H "authorization: Bearer ACCESS_TOKEN" \
   -d '{
     "name": "Multi-step demo",
     "inputSchema": {},
@@ -96,7 +93,7 @@ Use this version when you want to test the HTTP executor against a public test e
 ```bash
 curl -sS -X POST http://localhost:4000/workflows \
   -H "content-type: application/json" \
-  -H "x-user-id: USER_ID" \
+  -H "authorization: Bearer ACCESS_TOKEN" \
   -d '{
     "name": "HTTP step demo",
     "inputSchema": {},
@@ -135,7 +132,7 @@ Copy `workflow.id` from the response and continue with the same publish and trig
 
 ```bash
 curl -sS -X POST http://localhost:4000/workflows/WORKFLOW_ID/publish \
-  -H "x-user-id: USER_ID"
+  -H "authorization: Bearer ACCESS_TOKEN"
 ```
 
 ## Trigger An Execution
@@ -143,7 +140,7 @@ curl -sS -X POST http://localhost:4000/workflows/WORKFLOW_ID/publish \
 ```bash
 curl -sS -X POST http://localhost:4000/workflows/WORKFLOW_ID/executions \
   -H "content-type: application/json" \
-  -H "x-user-id: USER_ID" \
+  -H "authorization: Bearer ACCESS_TOKEN" \
   -d '{
     "input": {
       "requestId": "demo_001"
@@ -159,7 +156,7 @@ For a long-running execution, cancel it before the worker finishes:
 
 ```bash
 curl -sS -X POST http://localhost:4000/executions/EXECUTION_ID/cancel \
-  -H "x-user-id: USER_ID"
+  -H "authorization: Bearer ACCESS_TOKEN"
 ```
 
 Expected result:
@@ -174,7 +171,7 @@ Wait a moment, then run:
 
 ```bash
 curl -sS http://localhost:4000/executions/EXECUTION_ID \
-  -H "x-user-id: USER_ID"
+  -H "authorization: Bearer ACCESS_TOKEN"
 ```
 
 Expected result:

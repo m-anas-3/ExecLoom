@@ -12,6 +12,8 @@ describe("loadConfig", () => {
 
     assert.equal(config.NODE_ENV, "development");
     assert.equal(config.API_PORT, 4000);
+    assert.equal(config.AUTH_JWT_SECRET, "local-development-jwt-secret-change-me");
+    assert.equal(config.AUTH_ACCESS_TOKEN_TTL, "7d");
     assert.equal(config.WORKER_STALLED_STEP_TIMEOUT_MS, 300_000);
     assert.equal(config.WORKER_RECOVERY_INTERVAL_MS, 60_000);
   });

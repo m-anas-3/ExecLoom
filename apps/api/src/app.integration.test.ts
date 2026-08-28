@@ -5,7 +5,11 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 
-import type { ExecutionDetailResponse, WorkflowDetailResponse } from "@execloom/contracts";
+import type {
+  AuthResponse,
+  ExecutionDetailResponse,
+  WorkflowDetailResponse
+} from "@execloom/contracts";
 import { createDatabaseClient, type DatabaseClient } from "@execloom/db";
 import { createExecutionQueue } from "@execloom/queue";
 
@@ -20,24 +24,11 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
   let server: Server | undefined;
   let baseUrl: string;
   let userId: string;
+  let accessToken: string;
   let executionId: string | undefined;
 
   before(async () => {
     dbClient = createDatabaseClient();
-
-    const email = `api-integration-${Date.now()}@example.com`;
-    const [user] = await dbClient.queryClient<{ id: string }[]>`
-      insert into users (email, password_hash)
-      values (${email}, 'local-test-password')
-      returning id
-    `;
-
-    if (!user) {
-      throw new Error("Failed to create integration test user");
-    }
-
-    userId = user.id;
-
     const testServer = createApp().listen(0);
     server = testServer;
 
@@ -47,6 +38,16 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
 
     const address = testServer.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const registerResponse = await postPublicJson("/auth/register", {
+      email: `api-integration-${Date.now()}@example.com`,
+      password: "local-test-password"
+    });
+
+    assert.equal(registerResponse.status, 201);
+    const auth = (await registerResponse.json()) as AuthResponse;
+    userId = auth.user.id;
+    accessToken = auth.accessToken;
   });
 
   after(async () => {
@@ -138,7 +139,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
   });
 
   it("creates, publishes, triggers, and cancels a workflow execution", async () => {
-    const createResponse = await postJson("/workflows", {
+    const createResponse = await postProtectedJson("/workflows", {
       name: "Integration workflow",
       inputSchema: {},
       definition: {
@@ -162,7 +163,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
 
     const workflowId = created.workflow.id as string;
 
-    const publishResponse = await postJson(`/workflows/${workflowId}/publish`);
+    const publishResponse = await postProtectedJson(`/workflows/${workflowId}/publish`);
 
     assert.equal(publishResponse.status, 200);
     const published = (await publishResponse.json()) as WorkflowDetailResponse;
@@ -170,7 +171,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(published.workflow.status, "published");
     assert.equal(published.versions[0].status, "published");
 
-    const triggerResponse = await postJson(`/workflows/${workflowId}/executions`, {
+    const triggerResponse = await postProtectedJson(`/workflows/${workflowId}/executions`, {
       input: {
         requestId: "integration-test"
       }
@@ -185,7 +186,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(triggered.steps[0].status, "queued");
     assert.equal(triggered.events[0].type, "execution.queued");
 
-    const cancelResponse = await postJson(`/executions/${executionId}/cancel`);
+    const cancelResponse = await postProtectedJson(`/executions/${executionId}/cancel`);
 
     assert.equal(cancelResponse.status, 200);
     const cancelled = (await cancelResponse.json()) as ExecutionDetailResponse;
@@ -198,12 +199,22 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     );
   });
 
-  async function postJson(path: string, body?: unknown) {
+  async function postPublicJson(path: string, body?: unknown) {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
-        "content-type": "application/json",
-        "x-user-id": userId
+        "content-type": "application/json"
+      },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  }
+
+  async function postProtectedJson(path: string, body?: unknown) {
+    return fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json"
       },
       body: body === undefined ? undefined : JSON.stringify(body)
     });
