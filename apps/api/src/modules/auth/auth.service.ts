@@ -8,7 +8,7 @@ import type {
   RegisterRequest
 } from "@execloom/contracts";
 import { loadConfig } from "@execloom/config";
-import { createUser, findUserByEmailForAuth } from "@execloom/db";
+import { createUser, findUserByEmailForAuth, findUserByIdForAuth } from "@execloom/db";
 
 type AuthUserRecord = {
   id: string;
@@ -68,6 +68,16 @@ export async function verifyAccessToken(accessToken: string): Promise<string> {
   } catch {
     throw invalidTokenError();
   }
+}
+
+export async function getCurrentUser(userId: string): Promise<AuthUserResponse> {
+  const user = await findUserByIdForAuth(userId);
+
+  if (!user) {
+    throw invalidTokenError();
+  }
+
+  return mapAuthUser(user);
 }
 
 async function createAuthResponse(user: AuthUserRecord): Promise<AuthResponse> {

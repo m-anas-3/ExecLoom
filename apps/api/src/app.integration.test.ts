@@ -7,6 +7,7 @@ import { config as loadDotenv } from "dotenv";
 
 import type {
   AuthResponse,
+  CurrentUserResponse,
   ExecutionDetailResponse,
   WorkflowDetailResponse
 } from "@execloom/contracts";
@@ -48,6 +49,13 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     const auth = (await registerResponse.json()) as AuthResponse;
     userId = auth.user.id;
     accessToken = auth.accessToken;
+
+    const meResponse = await getProtectedJson("/auth/me");
+
+    assert.equal(meResponse.status, 200);
+    const me = (await meResponse.json()) as CurrentUserResponse;
+    assert.equal(me.user.id, userId);
+    assert.equal(me.user.email, auth.user.email);
   });
 
   after(async () => {
@@ -217,6 +225,14 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
         "content-type": "application/json"
       },
       body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  }
+
+  async function getProtectedJson(path: string) {
+    return fetch(`${baseUrl}${path}`, {
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
     });
   }
 });

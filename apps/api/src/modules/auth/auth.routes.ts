@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { loginRequestSchema, registerRequestSchema } from "@execloom/contracts";
 
-import { AuthServiceError, login, register } from "./auth.service.js";
+import { requireAuth } from "./auth.middleware.js";
+import { AuthServiceError, getCurrentUser, login, register } from "./auth.service.js";
 
 export function createAuthRoutes() {
   const router = Router();
@@ -43,6 +44,18 @@ export function createAuthRoutes() {
       const response = await login(body.data);
 
       res.json(response);
+    } catch (error) {
+      handleAuthError(error, res, next);
+    }
+  });
+
+  router.get("/me", requireAuth, async (_req, res, next) => {
+    try {
+      const user = await getCurrentUser(res.locals.userId);
+
+      res.json({
+        user
+      });
     } catch (error) {
       handleAuthError(error, res, next);
     }

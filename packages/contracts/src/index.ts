@@ -72,6 +72,10 @@ export const authResponseSchema = z.object({
   user: authUserResponseSchema
 });
 
+export const currentUserResponseSchema = z.object({
+  user: authUserResponseSchema
+});
+
 export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
   workflowStepBaseSchema.extend({
     type: z.literal("noop"),
@@ -189,6 +193,7 @@ export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type AuthUserResponse = z.infer<typeof authUserResponseSchema>;
 export type AuthResponse = z.infer<typeof authResponseSchema>;
+export type CurrentUserResponse = z.infer<typeof currentUserResponseSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
 export type WorkflowStepDefinition = z.infer<typeof workflowStepDefinitionSchema>;

@@ -45,3 +45,19 @@ export async function findUserByEmailForAuth(email: string) {
     return user ?? null;
   });
 }
+
+export async function findUserByIdForAuth(userId: string) {
+  return withDatabase(async ({ db }) => {
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        createdAt: users.createdAt
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    return user ?? null;
+  });
+}

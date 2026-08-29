@@ -20,6 +20,13 @@ curl -sS -X POST http://localhost:4000/auth/login \
   -d '{"email":"demo@example.com","password":"local-dev-password"}'
 ```
 
+Current user:
+
+```bash
+curl -sS http://localhost:4000/auth/me \
+  -H "authorization: Bearer ACCESS_TOKEN"
+```
+
 Protected routes require:
 
 ```text
