@@ -65,6 +65,9 @@ importers:
       '@execloom/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@execloom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@execloom/db':
         specifier: workspace:*
         version: link:../../packages/db

@@ -53,6 +53,7 @@ Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and 
 ```
 
 HTTP steps fail when the response is not `2xx` or the request exceeds `timeoutMs`.
+Localhost and private network URLs are rejected to reduce SSRF risk from user-defined workflows.
 
 ## Step Retries
 

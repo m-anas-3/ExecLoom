@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@execloom/config": "workspace:*",
+    "@execloom/contracts": "workspace:*",
     "@execloom/db": "workspace:*",
     "@execloom/queue": "workspace:*",
     "bullmq": "^6.2.0",

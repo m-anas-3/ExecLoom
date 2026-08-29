@@ -1,3 +1,4 @@
+import { isSafeHttpStepUrl } from "@execloom/contracts";
 import type { WorkflowStepDefinitionRecord } from "@execloom/db";
 
 export type StepExecutionInput = {
@@ -102,8 +103,10 @@ function getHttpConfig(config: Record<string, unknown>) {
     throw new Error("HTTP step config.url must be a non-empty string");
   }
 
-  if (!isAllowedHttpUrl(url)) {
-    throw new Error("HTTP step config.url must use http or https");
+  if (!isSafeHttpStepUrl(url)) {
+    throw new Error(
+      "HTTP step config.url must use http or https and cannot target local or private network hosts"
+    );
   }
 
   if (typeof method !== "string" || !["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
@@ -143,15 +146,6 @@ function getHttpTimeoutMs(config: Record<string, unknown>): number {
   }
 
   return rawTimeoutMs;
-}
-
-function isAllowedHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

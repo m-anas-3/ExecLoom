@@ -228,6 +228,35 @@ describe("executeWorkflowStep", () => {
     );
   });
 
+  it("rejects http steps targeting local or private network hosts", async () => {
+    const blockedUrls = [
+      "http://localhost:4000/tasks",
+      "http://127.0.0.1/tasks",
+      "http://10.0.0.1/tasks",
+      "http://100.64.0.1/tasks",
+      "http://169.254.169.254/latest/meta-data",
+      "http://172.16.0.1/tasks",
+      "http://192.168.1.10/tasks",
+      "http://[::1]/tasks"
+    ];
+
+    for (const url of blockedUrls) {
+      await assert.rejects(
+        executeWorkflowStep({
+          step: createStep({
+            type: "http",
+            config: {
+              url
+            }
+          }),
+          executionInput: {},
+          stepInput: {}
+        }),
+        /cannot target local or private network hosts/
+      );
+    }
+  });
+
   it("rejects unsupported step types", async () => {
     const step = createStep({
       type: "email"
