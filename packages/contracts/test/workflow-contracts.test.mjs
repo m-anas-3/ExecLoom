@@ -3,9 +3,45 @@ import { describe, it } from "node:test";
 
 import {
   createWorkflowRequestSchema,
+  loginRequestSchema,
+  registerRequestSchema,
   workflowDefinitionSchema,
   workflowStepTypeSchema
 } from "../dist/index.js";
+
+describe("auth contracts", () => {
+  it("normalizes register email addresses", () => {
+    const parsed = registerRequestSchema.parse({
+      email: "USER@Example.COM",
+      password: "password123"
+    });
+
+    assert.equal(parsed.email, "user@example.com");
+  });
+
+  it("rejects short register passwords", () => {
+    assert.throws(
+      () =>
+        registerRequestSchema.parse({
+          email: "user@example.com",
+          password: "short"
+        }),
+      /String must contain at least 8/
+    );
+  });
+
+  it("accepts login credentials", () => {
+    const parsed = loginRequestSchema.parse({
+      email: "USER@Example.COM",
+      password: "password123"
+    });
+
+    assert.deepEqual(parsed, {
+      email: "user@example.com",
+      password: "password123"
+    });
+  });
+});
 
 describe("workflow step types", () => {
   it("accepts supported step types", () => {

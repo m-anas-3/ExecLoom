@@ -16,7 +16,7 @@ export function createExecutionRoutes() {
 
   router.post("/workflows/:workflowId/executions", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const workflowId = uuidSchema.parse(req.params.workflowId);
       const body = triggerExecutionRequestSchema.safeParse(req.body);
 
@@ -47,7 +47,7 @@ export function createExecutionRoutes() {
 
   router.get("/executions/:id", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const executionId = uuidSchema.parse(req.params.id);
       const execution = await getExecution(ownerId, executionId);
 
@@ -67,7 +67,7 @@ export function createExecutionRoutes() {
 
   router.post("/executions/:id/cancel", async (req, res, next) => {
     try {
-      const ownerId = parseOwnerId(req.header("x-user-id"));
+      const ownerId = res.locals.userId as string;
       const executionId = uuidSchema.parse(req.params.id);
       const execution = await cancelExecution(ownerId, executionId);
 
@@ -86,20 +86,6 @@ export function createExecutionRoutes() {
   });
 
   return router;
-}
-
-function parseOwnerId(value: string | undefined): string {
-  const parsed = uuidSchema.safeParse(value);
-
-  if (!parsed.success) {
-    throw new ExecutionServiceError(
-      401,
-      "MISSING_OWNER",
-      "Provide a valid x-user-id header until auth is implemented"
-    );
-  }
-
-  return parsed.data;
 }
 
 function handleExecutionError(

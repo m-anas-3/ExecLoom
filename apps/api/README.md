@@ -2,6 +2,37 @@
 
 HTTP API, authentication, workflow management, execution trigger endpoints, and realtime gateway.
 
+## Auth
+
+Register:
+
+```bash
+curl -sS -X POST http://localhost:4000/auth/register \
+  -H "content-type: application/json" \
+  -d '{"email":"demo@example.com","password":"local-dev-password"}'
+```
+
+Login:
+
+```bash
+curl -sS -X POST http://localhost:4000/auth/login \
+  -H "content-type: application/json" \
+  -d '{"email":"demo@example.com","password":"local-dev-password"}'
+```
+
+Current user:
+
+```bash
+curl -sS http://localhost:4000/auth/me \
+  -H "authorization: Bearer ACCESS_TOKEN"
+```
+
+Protected routes require:
+
+```text
+Authorization: Bearer ACCESS_TOKEN
+```
+
 ## Tests
 
 Normal tests run without local infrastructure:
