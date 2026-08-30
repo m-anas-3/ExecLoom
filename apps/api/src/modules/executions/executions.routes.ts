@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { triggerExecutionRequestSchema } from "@execloom/contracts";
+import {
+  listWorkflowExecutionsQuerySchema,
+  triggerExecutionRequestSchema
+} from "@execloom/contracts";
 import { z } from "zod";
 
 import {
@@ -50,7 +53,18 @@ export function createExecutionRoutes() {
     try {
       const ownerId = res.locals.userId as string;
       const workflowId = uuidSchema.parse(req.params.workflowId);
-      const executions = await listWorkflowExecutions(ownerId, workflowId);
+      const query = listWorkflowExecutionsQuerySchema.safeParse(req.query);
+
+      if (!query.success) {
+        res.status(400).json({
+          code: "VALIDATION_ERROR",
+          message: "Invalid execution list query",
+          details: query.error.flatten()
+        });
+        return;
+      }
+
+      const executions = await listWorkflowExecutions(ownerId, workflowId, query.data);
 
       res.json(executions);
     } catch (error) {

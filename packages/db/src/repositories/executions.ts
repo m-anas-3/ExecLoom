@@ -45,6 +45,12 @@ export type TriggerExecutionRecordInput = {
   inputJson: unknown;
 };
 
+export type ListExecutionsRecordInput = {
+  ownerId: string;
+  workflowId: string;
+  limit: number;
+};
+
 export type RecoverStalledExecutionStepsInput = {
   stalledBefore: Date;
   limit?: number;
@@ -207,14 +213,14 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
   });
 }
 
-export async function listExecutionsByWorkflowAndOwner(workflowId: string, ownerId: string) {
+export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsRecordInput) {
   return withDatabase(async ({ db }) => {
     const [workflow] = await db
       .select({
         id: workflows.id
       })
       .from(workflows)
-      .where(and(eq(workflows.id, workflowId), eq(workflows.ownerId, ownerId)))
+      .where(and(eq(workflows.id, input.workflowId), eq(workflows.ownerId, input.ownerId)))
       .limit(1);
 
     if (!workflow) {
@@ -238,7 +244,8 @@ export async function listExecutionsByWorkflowAndOwner(workflowId: string, owner
       .from(executions)
       .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
       .where(eq(workflowVersions.workflowId, workflow.id))
-      .orderBy(desc(executions.createdAt));
+      .orderBy(desc(executions.createdAt))
+      .limit(input.limit);
   });
 }
 

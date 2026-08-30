@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   createWorkflowRequestSchema,
   isSafeHttpStepUrl,
+  listWorkflowExecutionsQuerySchema,
   loginRequestSchema,
   registerRequestSchema,
   workflowDefinitionSchema,
@@ -41,6 +42,32 @@ describe("auth contracts", () => {
       email: "user@example.com",
       password: "password123"
     });
+  });
+});
+
+describe("execution list query contracts", () => {
+  it("defaults execution history limit", () => {
+    const parsed = listWorkflowExecutionsQuerySchema.parse({});
+
+    assert.equal(parsed.limit, 20);
+  });
+
+  it("coerces valid execution history limit values", () => {
+    const parsed = listWorkflowExecutionsQuerySchema.parse({
+      limit: "50"
+    });
+
+    assert.equal(parsed.limit, 50);
+  });
+
+  it("rejects invalid execution history limit values", () => {
+    assert.throws(
+      () =>
+        listWorkflowExecutionsQuerySchema.parse({
+          limit: "101"
+        }),
+      /Number must be less than or equal to 100/
+    );
   });
 });
 
