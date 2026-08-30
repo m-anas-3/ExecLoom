@@ -9,6 +9,7 @@ import type {
   AuthResponse,
   CurrentUserResponse,
   ExecutionDetailResponse,
+  ExecutionListResponse,
   WorkflowDetailResponse
 } from "@execloom/contracts";
 import { createDatabaseClient, type DatabaseClient } from "@execloom/db";
@@ -193,6 +194,15 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(triggered.execution.status, "queued");
     assert.equal(triggered.steps[0].status, "queued");
     assert.equal(triggered.events[0].type, "execution.queued");
+
+    const listExecutionsResponse = await getProtectedJson(`/workflows/${workflowId}/executions`);
+
+    assert.equal(listExecutionsResponse.status, 200);
+    const listedExecutions = (await listExecutionsResponse.json()) as ExecutionListResponse;
+    assert.equal(
+      listedExecutions.executions.some((execution) => execution.id === executionId),
+      true
+    );
 
     const cancelResponse = await postProtectedJson(`/executions/${executionId}/cancel`);
 

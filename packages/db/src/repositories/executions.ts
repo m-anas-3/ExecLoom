@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   assertExecutionTransition,
   assertStepRunTransition
@@ -204,6 +204,41 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
       steps,
       events
     };
+  });
+}
+
+export async function listExecutionsByWorkflowAndOwner(workflowId: string, ownerId: string) {
+  return withDatabase(async ({ db }) => {
+    const [workflow] = await db
+      .select({
+        id: workflows.id
+      })
+      .from(workflows)
+      .where(and(eq(workflows.id, workflowId), eq(workflows.ownerId, ownerId)))
+      .limit(1);
+
+    if (!workflow) {
+      return null;
+    }
+
+    return db
+      .select({
+        id: executions.id,
+        workflowVersionId: executions.workflowVersionId,
+        status: executions.status,
+        triggerType: executions.triggerType,
+        inputJson: executions.inputJson,
+        outputJson: executions.outputJson,
+        errorJson: executions.errorJson,
+        createdAt: executions.createdAt,
+        queuedAt: executions.queuedAt,
+        startedAt: executions.startedAt,
+        endedAt: executions.endedAt
+      })
+      .from(executions)
+      .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
+      .where(eq(workflowVersions.workflowId, workflow.id))
+      .orderBy(desc(executions.createdAt));
   });
 }
 
