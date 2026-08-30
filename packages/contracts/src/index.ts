@@ -141,6 +141,10 @@ export const triggerExecutionRequestSchema = z.object({
   input: jsonObjectSchema.default({})
 });
 
+export const listWorkflowExecutionsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20)
+});
+
 export const executionResponseSchema = z.object({
   id: z.string().uuid(),
   workflowVersionId: z.string().uuid(),
@@ -211,6 +215,9 @@ export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;
 export type TriggerExecutionRequest = z.infer<typeof triggerExecutionRequestSchema>;
+export type ListWorkflowExecutionsQuery = z.infer<
+  typeof listWorkflowExecutionsQuerySchema
+>;
 export type ExecutionResponse = z.infer<typeof executionResponseSchema>;
 export type StepRunResponse = z.infer<typeof stepRunResponseSchema>;
 export type ExecutionEventResponse = z.infer<typeof executionEventResponseSchema>;

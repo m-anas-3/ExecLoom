@@ -3,6 +3,7 @@ import type {
   ExecutionEventResponse,
   ExecutionListResponse,
   ExecutionResponse,
+  ListWorkflowExecutionsQuery,
   StepRunResponse,
   TriggerExecutionRequest
 } from "@execloom/contracts";
@@ -94,9 +95,14 @@ export async function getExecution(
 
 export async function listWorkflowExecutions(
   ownerId: string,
-  workflowId: string
+  workflowId: string,
+  query: ListWorkflowExecutionsQuery
 ): Promise<ExecutionListResponse> {
-  const executions = await listExecutionsByWorkflowAndOwner(workflowId, ownerId);
+  const executions = await listExecutionsByWorkflowAndOwner({
+    workflowId,
+    ownerId,
+    limit: query.limit
+  });
 
   if (!executions) {
     throw new ExecutionServiceError(404, "WORKFLOW_NOT_FOUND", "Workflow was not found");

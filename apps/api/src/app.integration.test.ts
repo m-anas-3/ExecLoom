@@ -195,7 +195,9 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(triggered.steps[0].status, "queued");
     assert.equal(triggered.events[0].type, "execution.queued");
 
-    const listExecutionsResponse = await getProtectedJson(`/workflows/${workflowId}/executions`);
+    const listExecutionsResponse = await getProtectedJson(
+      `/workflows/${workflowId}/executions?limit=1`
+    );
 
     assert.equal(listExecutionsResponse.status, 200);
     const listedExecutions = (await listExecutionsResponse.json()) as ExecutionListResponse;
