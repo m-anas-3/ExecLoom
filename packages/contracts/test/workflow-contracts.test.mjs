@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   createWorkflowRequestSchema,
+  isSafeHttpStepUrl,
   loginRequestSchema,
   registerRequestSchema,
   workflowDefinitionSchema,
@@ -177,6 +178,50 @@ describe("workflow definition contracts", () => {
         }),
       /URL must use http or https/
     );
+  });
+
+  it("rejects http steps targeting local or private network hosts", () => {
+    const blockedUrls = [
+      "http://localhost:3000/notify",
+      "http://api.localhost/notify",
+      "http://127.0.0.1/notify",
+      "http://10.0.0.1/notify",
+      "http://100.64.0.1/notify",
+      "http://169.254.169.254/latest/meta-data",
+      "http://172.16.0.1/notify",
+      "http://192.168.1.1/notify",
+      "http://[::]/notify",
+      "http://[::1]/notify",
+      "http://[fe80::1]/notify",
+      "http://[fc00::1]/notify",
+      "http://[::ffff:127.0.0.1]/notify"
+    ];
+
+    for (const url of blockedUrls) {
+      assert.throws(
+        () =>
+          workflowDefinitionSchema.parse({
+            steps: [
+              {
+                key: "notify",
+                type: "http",
+                config: {
+                  url
+                }
+              }
+            ]
+          }),
+        /cannot target local or private network hosts/
+      );
+    }
+  });
+
+  it("classifies safe and unsafe http step URLs", () => {
+    assert.equal(isSafeHttpStepUrl("https://api.example.com/tasks"), true);
+    assert.equal(isSafeHttpStepUrl("http://example.com/tasks"), true);
+    assert.equal(isSafeHttpStepUrl("ftp://api.example.com/tasks"), false);
+    assert.equal(isSafeHttpStepUrl("http://localhost:3000/tasks"), false);
+    assert.equal(isSafeHttpStepUrl("http://127.0.0.1/tasks"), false);
   });
 
   it("rejects delay steps with invalid timing", () => {

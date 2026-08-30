@@ -1,8 +1,17 @@
 import { z } from "zod";
 
+declare const URL: {
+  new (value: string): {
+    hostname: string;
+    protocol: string;
+  };
+};
+
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 export const workflowStepTypeSchema = z.enum(["noop", "delay", "http"]);
 export const httpStepMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const privateHttpStepUrlMessage =
+  "URL must use http or https and cannot target local or private network hosts";
 
 const workflowStepBaseSchema = z.object({
   key: z.string().min(1).max(80),
@@ -28,10 +37,7 @@ export const httpStepConfigSchema = z.object({
   url: z
     .string()
     .url()
-    .refine(
-      (value) => value.startsWith("http://") || value.startsWith("https://"),
-      "URL must use http or https"
-    ),
+    .refine(isSafeHttpStepUrl, privateHttpStepUrlMessage),
   method: httpStepMethodSchema.default("GET"),
   headers: z.record(z.string()).default({}),
   body: z.unknown().optional(),
@@ -205,3 +211,114 @@ export type ExecutionResponse = z.infer<typeof executionResponseSchema>;
 export type StepRunResponse = z.infer<typeof stepRunResponseSchema>;
 export type ExecutionEventResponse = z.infer<typeof executionEventResponseSchema>;
 export type ExecutionDetailResponse = z.infer<typeof executionDetailResponseSchema>;
+
+export function isSafeHttpStepUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return false;
+    }
+
+    return !isBlockedHttpStepHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isBlockedHttpStepHostname(hostname: string): boolean {
+  const normalizedHostname = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+
+  if (normalizedHostname === "localhost" || normalizedHostname.endsWith(".localhost")) {
+    return true;
+  }
+
+  if (isPrivateIpv4Address(normalizedHostname)) {
+    return true;
+  }
+
+  return isPrivateIpv6Address(normalizedHostname);
+}
+
+function isPrivateIpv4Address(hostname: string): boolean {
+  const parts = hostname.split(".");
+
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const octets = parts.map((part) => Number(part));
+
+  if (!octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    return false;
+  }
+
+  const [first, second] = octets;
+
+  if (first === undefined || second === undefined) {
+    return false;
+  }
+
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+function isPrivateIpv6Address(hostname: string): boolean {
+  const ipv4MappedAddress = getIpv4MappedIpv6Address(hostname);
+
+  if (ipv4MappedAddress !== null) {
+    return isPrivateIpv4Address(ipv4MappedAddress);
+  }
+
+  const firstHextetText = hostname.split(":")[0];
+  const firstHextet =
+    firstHextetText === undefined ? Number.NaN : Number.parseInt(firstHextetText, 16);
+
+  return (
+    hostname === "::" ||
+    hostname === "::1" ||
+    (firstHextet >= 0xfc00 && firstHextet <= 0xfdff) ||
+    (firstHextet >= 0xfe80 && firstHextet <= 0xfebf)
+  );
+}
+
+function getIpv4MappedIpv6Address(hostname: string): string | null {
+  if (!hostname.startsWith("::ffff:")) {
+    return null;
+  }
+
+  const suffix = hostname.slice("::ffff:".length);
+
+  if (suffix.includes(".")) {
+    return suffix;
+  }
+
+  const parts = suffix.split(":");
+
+  if (parts.length !== 2) {
+    return null;
+  }
+
+  const high = Number.parseInt(parts[0] ?? "", 16);
+  const low = Number.parseInt(parts[1] ?? "", 16);
+
+  if (
+    !Number.isInteger(high) ||
+    !Number.isInteger(low) ||
+    high < 0 ||
+    high > 0xffff ||
+    low < 0 ||
+    low > 0xffff
+  ) {
+    return null;
+  }
+
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
