@@ -60,6 +60,17 @@ describe("execution list query contracts", () => {
     assert.equal(parsed.limit, 50);
   });
 
+  it("accepts valid execution history status filters", () => {
+    const parsed = listWorkflowExecutionsQuerySchema.parse({
+      status: "failed"
+    });
+
+    assert.deepEqual(parsed, {
+      limit: 20,
+      status: "failed"
+    });
+  });
+
   it("rejects invalid execution history limit values", () => {
     assert.throws(
       () =>
@@ -67,6 +78,16 @@ describe("execution list query contracts", () => {
           limit: "101"
         }),
       /Number must be less than or equal to 100/
+    );
+  });
+
+  it("rejects invalid execution history status filters", () => {
+    assert.throws(
+      () =>
+        listWorkflowExecutionsQuerySchema.parse({
+          status: "paused"
+        }),
+      /Invalid enum value/
     );
   });
 });

@@ -196,13 +196,17 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(triggered.events[0].type, "execution.queued");
 
     const listExecutionsResponse = await getProtectedJson(
-      `/workflows/${workflowId}/executions?limit=1`
+      `/workflows/${workflowId}/executions?limit=1&status=queued`
     );
 
     assert.equal(listExecutionsResponse.status, 200);
     const listedExecutions = (await listExecutionsResponse.json()) as ExecutionListResponse;
     assert.equal(
       listedExecutions.executions.some((execution) => execution.id === executionId),
+      true
+    );
+    assert.equal(
+      listedExecutions.executions.every((execution) => execution.status === "queued"),
       true
     );
 

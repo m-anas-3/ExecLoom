@@ -49,6 +49,7 @@ export type ListExecutionsRecordInput = {
   ownerId: string;
   workflowId: string;
   limit: number;
+  status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 };
 
 export type RecoverStalledExecutionStepsInput = {
@@ -227,6 +228,12 @@ export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsReco
       return null;
     }
 
+    const executionFilters = [eq(workflowVersions.workflowId, workflow.id)];
+
+    if (input.status) {
+      executionFilters.push(eq(executions.status, input.status));
+    }
+
     return db
       .select({
         id: executions.id,
@@ -243,7 +250,7 @@ export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsReco
       })
       .from(executions)
       .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
-      .where(eq(workflowVersions.workflowId, workflow.id))
+      .where(and(...executionFilters))
       .orderBy(desc(executions.createdAt))
       .limit(input.limit);
   });
