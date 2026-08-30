@@ -141,14 +141,23 @@ export const triggerExecutionRequestSchema = z.object({
   input: jsonObjectSchema.default({})
 });
 
+export const executionStatusSchema = z.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled"
+]);
+
 export const listWorkflowExecutionsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20)
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: executionStatusSchema.optional()
 });
 
 export const executionResponseSchema = z.object({
   id: z.string().uuid(),
   workflowVersionId: z.string().uuid(),
-  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  status: executionStatusSchema,
   triggerType: z.string(),
   input: jsonObjectSchema,
   output: z.unknown().nullable(),
@@ -215,9 +224,8 @@ export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;
 export type TriggerExecutionRequest = z.infer<typeof triggerExecutionRequestSchema>;
-export type ListWorkflowExecutionsQuery = z.infer<
-  typeof listWorkflowExecutionsQuerySchema
->;
+export type ExecutionStatus = z.infer<typeof executionStatusSchema>;
+export type ListWorkflowExecutionsQuery = z.infer<typeof listWorkflowExecutionsQuerySchema>;
 export type ExecutionResponse = z.infer<typeof executionResponseSchema>;
 export type StepRunResponse = z.infer<typeof stepRunResponseSchema>;
 export type ExecutionEventResponse = z.infer<typeof executionEventResponseSchema>;

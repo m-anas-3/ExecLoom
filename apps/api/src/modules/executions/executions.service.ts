@@ -101,7 +101,8 @@ export async function listWorkflowExecutions(
   const executions = await listExecutionsByWorkflowAndOwner({
     workflowId,
     ownerId,
-    limit: query.limit
+    limit: query.limit,
+    status: query.status
   });
 
   if (!executions) {
