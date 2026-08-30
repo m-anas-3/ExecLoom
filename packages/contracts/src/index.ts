@@ -194,6 +194,10 @@ export const executionDetailResponseSchema = z.object({
   events: z.array(executionEventResponseSchema)
 });
 
+export const executionListResponseSchema = z.object({
+  executions: z.array(executionResponseSchema)
+});
+
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
@@ -211,6 +215,7 @@ export type ExecutionResponse = z.infer<typeof executionResponseSchema>;
 export type StepRunResponse = z.infer<typeof stepRunResponseSchema>;
 export type ExecutionEventResponse = z.infer<typeof executionEventResponseSchema>;
 export type ExecutionDetailResponse = z.infer<typeof executionDetailResponseSchema>;
+export type ExecutionListResponse = z.infer<typeof executionListResponseSchema>;
 
 export function isSafeHttpStepUrl(value: string): boolean {
   try {

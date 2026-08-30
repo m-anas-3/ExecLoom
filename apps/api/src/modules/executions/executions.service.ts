@@ -1,6 +1,7 @@
 import type {
   ExecutionDetailResponse,
   ExecutionEventResponse,
+  ExecutionListResponse,
   ExecutionResponse,
   StepRunResponse,
   TriggerExecutionRequest
@@ -8,12 +9,16 @@ import type {
 import {
   cancelExecutionByOwner,
   getExecutionDetailByOwner,
+  listExecutionsByWorkflowAndOwner,
   triggerExecutionForWorkflow
 } from "@execloom/db";
 import { enqueueExecutionJob } from "@execloom/queue";
 
 type ExecutionDetailRecord = NonNullable<Awaited<ReturnType<typeof getExecutionDetailByOwner>>>;
 type ExecutionRecord = ExecutionDetailRecord["execution"];
+type ExecutionListRecord = NonNullable<
+  Awaited<ReturnType<typeof listExecutionsByWorkflowAndOwner>>
+>[number];
 type StepRunRecord = ExecutionDetailRecord["steps"][number];
 type ExecutionEventRecord = ExecutionDetailRecord["events"][number];
 
@@ -87,6 +92,21 @@ export async function getExecution(
   };
 }
 
+export async function listWorkflowExecutions(
+  ownerId: string,
+  workflowId: string
+): Promise<ExecutionListResponse> {
+  const executions = await listExecutionsByWorkflowAndOwner(workflowId, ownerId);
+
+  if (!executions) {
+    throw new ExecutionServiceError(404, "WORKFLOW_NOT_FOUND", "Workflow was not found");
+  }
+
+  return {
+    executions: executions.map(mapExecution)
+  };
+}
+
 export async function cancelExecution(
   ownerId: string,
   executionId: string
@@ -120,7 +140,7 @@ export async function cancelExecution(
   };
 }
 
-function mapExecution(execution: ExecutionRecord): ExecutionResponse {
+function mapExecution(execution: ExecutionRecord | ExecutionListRecord): ExecutionResponse {
   return {
     id: execution.id,
     workflowVersionId: execution.workflowVersionId,
