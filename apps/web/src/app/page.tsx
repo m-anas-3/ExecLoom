@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Braces,
   GitBranch,
   History,
   Loader2,
@@ -9,20 +10,23 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Rocket,
   ShieldCheck,
   Workflow
 } from "lucide-react";
 
-import type {
-  AuthUserResponse,
-  CreateWorkflowRequest,
-  ExecutionDetailResponse,
-  ExecutionResponse,
-  ExecutionStatus,
-  TriggerExecutionRequest,
-  WorkflowDetailResponse,
-  WorkflowResponse
+import {
+  createWorkflowRequestSchema,
+  triggerExecutionRequestSchema,
+  type AuthUserResponse,
+  type CreateWorkflowRequest,
+  type ExecutionDetailResponse,
+  type ExecutionResponse,
+  type ExecutionStatus,
+  type TriggerExecutionRequest,
+  type WorkflowDetailResponse,
+  type WorkflowResponse
 } from "@execloom/contracts";
 
 import {
@@ -62,34 +66,76 @@ const statusFilters: Array<ExecutionStatus | "all"> = [
   "failed",
   "cancelled"
 ];
-const defaultWorkflowInputSchemaText = "{}";
-const defaultWorkflowDefinitionText = JSON.stringify(
+
+const defaultWorkflowInputSchema: Record<string, unknown> = {};
+const workflowTemplates: Array<{
+  label: string;
+  description: string;
+  definition: CreateWorkflowRequest["definition"];
+  executionInput: TriggerExecutionRequest["input"];
+}> = [
   {
-    steps: [
-      {
-        key: "start",
-        type: "noop",
-        config: {}
-      },
-      {
-        key: "wait",
-        type: "delay",
-        config: {
-          ms: 1000
+    label: "Noop + Delay",
+    description: "Two simple local steps for testing the worker pipeline.",
+    definition: {
+      steps: [
+        {
+          key: "start",
+          type: "noop",
+          config: {},
+          retry: {
+            maxAttempts: 1,
+            backoffMs: 0
+          }
+        },
+        {
+          key: "wait",
+          type: "delay",
+          config: {
+            ms: 1000
+          },
+          retry: {
+            maxAttempts: 1,
+            backoffMs: 0
+          }
         }
-      }
-    ]
+      ]
+    },
+    executionInput: {
+      source: "web"
+    }
   },
-  null,
-  2
-);
-const defaultExecutionInputText = JSON.stringify(
   {
-    source: "web"
-  },
-  null,
-  2
-);
+    label: "HTTP GET",
+    description: "One outbound HTTP step with timeout and retry metadata.",
+    definition: {
+      steps: [
+        {
+          key: "fetch-example",
+          type: "http",
+          config: {
+            url: "https://example.com",
+            method: "GET",
+            headers: {},
+            timeoutMs: 5000
+          },
+          retry: {
+            maxAttempts: 2,
+            backoffMs: 1000
+          }
+        }
+      ]
+    },
+    executionInput: {
+      source: "web",
+      requestId: "manual-test"
+    }
+  }
+];
+const defaultWorkflowTemplate = workflowTemplates[0]!;
+const defaultWorkflowInputSchemaText = formatJson(defaultWorkflowInputSchema);
+const defaultWorkflowDefinitionText = formatJson(defaultWorkflowTemplate.definition);
+const defaultExecutionInputText = formatJson(defaultWorkflowTemplate.executionInput);
 
 export default function Home() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -238,14 +284,7 @@ export default function Home() {
     }
 
     await runAction(async () => {
-      const inputSchema = parseJsonObject(newWorkflowInputSchemaText, "Input schema");
-      const definition = parseWorkflowDefinition(newWorkflowDefinitionText);
-      const created = await createWorkflow(accessToken, {
-        name: newWorkflowName,
-        description: newWorkflowDescription || undefined,
-        inputSchema,
-        definition
-      } satisfies CreateWorkflowRequest);
+      const created = await createWorkflow(accessToken, buildCreateWorkflowRequest());
 
       setSelectedWorkflowId(created.workflow.id);
       setWorkflowDetail(created);
@@ -271,6 +310,70 @@ export default function Home() {
 
     await runAction(async () => {
       await refreshExecutions(selectedWorkflowId, accessToken, undefined, filter);
+    });
+  }
+
+  function buildCreateWorkflowRequest(): CreateWorkflowRequest {
+    const candidate = {
+      name: newWorkflowName,
+      description: newWorkflowDescription || undefined,
+      inputSchema: parseJsonObject(newWorkflowInputSchemaText, "Input schema"),
+      definition: parseJsonObject(newWorkflowDefinitionText, "Definition")
+    };
+    const result = createWorkflowRequestSchema.safeParse(candidate);
+
+    if (!result.success) {
+      throw new Error(formatValidationIssues("Workflow", result.error.issues));
+    }
+
+    return result.data;
+  }
+
+  function buildTriggerExecutionRequest(): TriggerExecutionRequest {
+    const candidate = {
+      input: parseJsonObject(executionInputText, "Execution input")
+    };
+    const result = triggerExecutionRequestSchema.safeParse(candidate);
+
+    if (!result.success) {
+      throw new Error(formatValidationIssues("Execution input", result.error.issues));
+    }
+
+    return result.data;
+  }
+
+  function runLocalAction(action: () => void) {
+    setError(null);
+
+    try {
+      action();
+    } catch (requestError) {
+      setError(getErrorMessage(requestError));
+    }
+  }
+
+  function handleApplyWorkflowTemplate(template: (typeof workflowTemplates)[number]) {
+    runLocalAction(() => {
+      setNewWorkflowDefinitionText(formatJson(template.definition));
+      setExecutionInputText(formatJson(template.executionInput));
+    });
+  }
+
+  function handleFormatJsonField(
+    value: string,
+    label: string,
+    updateValue: (formattedValue: string) => void
+  ) {
+    runLocalAction(() => {
+      updateValue(formatJson(parseJsonObject(value, label)));
+    });
+  }
+
+  function handleResetAuthoringDefaults() {
+    runLocalAction(() => {
+      setNewWorkflowInputSchemaText(defaultWorkflowInputSchemaText);
+      setNewWorkflowDefinitionText(defaultWorkflowDefinitionText);
+      setExecutionInputText(defaultExecutionInputText);
     });
   }
 
@@ -402,10 +505,27 @@ export default function Home() {
           <Card>
             <CardHeader>
               <CardTitle>New Workflow</CardTitle>
-              <CardDescription>Create a demo workflow with noop and delay steps.</CardDescription>
+              <CardDescription>Create a workflow from editable JSON.</CardDescription>
             </CardHeader>
             <CardContent>
               <form className="grid gap-3" onSubmit={handleCreateWorkflow}>
+                <div className="grid gap-2">
+                  <Label>Template</Label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {workflowTemplates.map((template) => (
+                      <Button
+                        key={template.label}
+                        type="button"
+                        variant="outline"
+                        title={template.description}
+                        onClick={() => handleApplyWorkflowTemplate(template)}
+                      >
+                        <Braces className="size-4" />
+                        {template.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="workflow-name">Name</Label>
                   <Input
@@ -424,7 +544,24 @@ export default function Home() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="workflow-input-schema">Input Schema JSON</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="workflow-input-schema">Input Schema JSON</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        handleFormatJsonField(
+                          newWorkflowInputSchemaText,
+                          "Input schema",
+                          setNewWorkflowInputSchemaText
+                        )
+                      }
+                    >
+                      <Braces className="size-4" />
+                      Format
+                    </Button>
+                  </div>
                   <Textarea
                     id="workflow-input-schema"
                     className="min-h-24 font-mono text-xs"
@@ -433,7 +570,24 @@ export default function Home() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="workflow-definition">Definition JSON</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="workflow-definition">Definition JSON</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        handleFormatJsonField(
+                          newWorkflowDefinitionText,
+                          "Definition",
+                          setNewWorkflowDefinitionText
+                        )
+                      }
+                    >
+                      <Braces className="size-4" />
+                      Format
+                    </Button>
+                  </div>
                   <Textarea
                     id="workflow-definition"
                     className="min-h-56 font-mono text-xs"
@@ -442,10 +596,16 @@ export default function Home() {
                     required
                   />
                 </div>
-                <Button type="submit" disabled={isBusy}>
-                  <Plus className="size-4" />
-                  Create
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={isBusy}>
+                    <Plus className="size-4" />
+                    Create
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleResetAuthoringDefaults}>
+                    <RotateCcw className="size-4" />
+                    Reset
+                  </Button>
+                </div>
               </form>
             </CardContent>
           </Card>
@@ -523,10 +683,11 @@ export default function Home() {
                       disabled={isBusy || selectedWorkflow.status !== "published"}
                       onClick={() =>
                         void runAction(async () => {
-                          const input = parseJsonObject(executionInputText, "Execution input");
-                          const triggered = await triggerWorkflow(accessToken, selectedWorkflow.id, {
-                            input
-                          } satisfies TriggerExecutionRequest);
+                          const triggered = await triggerWorkflow(
+                            accessToken,
+                            selectedWorkflow.id,
+                            buildTriggerExecutionRequest()
+                          );
 
                           setSelectedExecutionDetail(triggered);
                           await refreshExecutions();
@@ -539,7 +700,24 @@ export default function Home() {
                   </div>
 
                   <div className="grid gap-2">
-                    <Label htmlFor="execution-input">Execution Input</Label>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="execution-input">Execution Input</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          handleFormatJsonField(
+                            executionInputText,
+                            "Execution input",
+                            setExecutionInputText
+                          )
+                        }
+                      >
+                        <Braces className="size-4" />
+                        Format
+                      </Button>
+                    </div>
                     <Textarea
                       id="execution-input"
                       className="min-h-28 font-mono text-xs"
@@ -818,6 +996,25 @@ function parseJsonObject(value: string, label: string): Record<string, unknown> 
   }
 
   return parsed;
+}
+
+function formatValidationIssues(
+  label: string,
+  issues: Array<{
+    path: readonly unknown[];
+    message: string;
+  }>
+) {
+  const details = issues
+    .slice(0, 4)
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.map(String).join(".") : label;
+
+      return `${path}: ${issue.message}`;
+    })
+    .join("; ");
+
+  return details ? `${label} is invalid: ${details}` : `${label} is invalid`;
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
