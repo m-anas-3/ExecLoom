@@ -16,6 +16,7 @@ import {
 
 import type {
   AuthUserResponse,
+  ExecutionDetailResponse,
   ExecutionResponse,
   ExecutionStatus,
   WorkflowDetailResponse,
@@ -26,6 +27,7 @@ import {
   ApiError,
   cancelExecution,
   createDemoWorkflow,
+  getExecution,
   getCurrentUser,
   getWorkflow,
   listWorkflowExecutions,
@@ -68,6 +70,8 @@ export default function Home() {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowDetailResponse | null>(null);
   const [executions, setExecutions] = useState<ExecutionResponse[]>([]);
+  const [selectedExecutionDetail, setSelectedExecutionDetail] =
+    useState<ExecutionDetailResponse | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<ExecutionStatus | "all">("all");
   const [newWorkflowName, setNewWorkflowName] = useState("Customer onboarding");
@@ -147,6 +151,18 @@ export default function Home() {
 
     setExecutions((current) => (cursor ? [...current, ...response.executions] : response.executions));
     setNextCursor(response.nextCursor);
+
+    if (!cursor && selectedExecutionDetail) {
+      const updatedExecution = response.executions.find(
+        (execution) => execution.id === selectedExecutionDetail.execution.id
+      );
+
+      if (!updatedExecution) {
+        setSelectedExecutionDetail(null);
+      } else {
+        setSelectedExecutionDetail(await getExecution(token, updatedExecution.id));
+      }
+    }
   }
 
   async function runAction(action: () => Promise<void>) {
@@ -192,6 +208,7 @@ export default function Home() {
       setSelectedWorkflowId(created.workflow.id);
       setWorkflowDetail(created);
       setExecutions([]);
+      setSelectedExecutionDetail(null);
       setNextCursor(null);
       await refreshWorkflows(accessToken);
     });
@@ -199,6 +216,7 @@ export default function Home() {
 
   async function handleSelectWorkflow(workflowId: string) {
     setSelectedWorkflowId(workflowId);
+    setSelectedExecutionDetail(null);
 
     await runAction(async () => {
       await refreshWorkflowDetail(workflowId);
@@ -214,6 +232,16 @@ export default function Home() {
     });
   }
 
+  async function handleSelectExecution(executionId: string) {
+    if (!accessToken) {
+      return;
+    }
+
+    await runAction(async () => {
+      setSelectedExecutionDetail(await getExecution(accessToken, executionId));
+    });
+  }
+
   function handleLogout() {
     window.localStorage.removeItem(accessTokenStorageKey);
     setAccessToken(null);
@@ -221,6 +249,7 @@ export default function Home() {
     setWorkflows([]);
     setWorkflowDetail(null);
     setExecutions([]);
+    setSelectedExecutionDetail(null);
     setSelectedWorkflowId(null);
   }
 
@@ -433,7 +462,8 @@ export default function Home() {
                       disabled={isBusy || selectedWorkflow.status !== "published"}
                       onClick={() =>
                         void runAction(async () => {
-                          await triggerWorkflow(accessToken, selectedWorkflow.id);
+                          const triggered = await triggerWorkflow(accessToken, selectedWorkflow.id);
+                          setSelectedExecutionDetail(triggered);
                           await refreshExecutions();
                         })
                       }
@@ -497,9 +527,13 @@ export default function Home() {
                   <p className="px-4 py-6 text-sm text-neutral-600">No executions found.</p>
                 ) : (
                   executions.map((execution) => (
-                    <div
+                    <button
                       key={execution.id}
-                      className="grid grid-cols-[1fr_120px_170px] items-center border-t border-neutral-200 px-4 py-3 text-sm"
+                      className={cn(
+                        "grid grid-cols-[1fr_120px_170px] items-center border-t border-neutral-200 px-4 py-3 text-left text-sm transition-colors hover:bg-neutral-50",
+                        selectedExecutionDetail?.execution.id === execution.id ? "bg-neutral-50" : ""
+                      )}
+                      onClick={() => void handleSelectExecution(execution.id)}
                     >
                       <span className="truncate font-mono text-xs text-neutral-700">
                         {execution.id}
@@ -508,7 +542,7 @@ export default function Home() {
                       <span className="text-xs text-neutral-600">
                         {formatDate(execution.createdAt)}
                       </span>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -544,6 +578,86 @@ export default function Home() {
                   </Button>
                 ) : null}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex-row items-start justify-between gap-4">
+              <div>
+                <CardTitle>Execution Details</CardTitle>
+                <CardDescription>Step runs and events for the selected execution.</CardDescription>
+              </div>
+              {selectedExecutionDetail ? (
+                <StatusBadge status={selectedExecutionDetail.execution.status} />
+              ) : null}
+            </CardHeader>
+            <CardContent>
+              {selectedExecutionDetail ? (
+                <div className="grid gap-4">
+                  <div className="grid gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-3">
+                    <Metric label="Steps" value={String(selectedExecutionDetail.steps.length)} />
+                    <Metric label="Events" value={String(selectedExecutionDetail.events.length)} />
+                    <Metric
+                      label="Trigger"
+                      value={selectedExecutionDetail.execution.triggerType}
+                    />
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <JsonBlock label="Input" value={selectedExecutionDetail.execution.input} />
+                    <JsonBlock label="Output" value={selectedExecutionDetail.execution.output} />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <h3 className="text-sm font-medium">Step Runs</h3>
+                    <div className="overflow-hidden rounded-md border border-neutral-200">
+                      <div className="grid grid-cols-[1fr_120px_100px] bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-600">
+                        <span>Step</span>
+                        <span>Status</span>
+                        <span>Attempts</span>
+                      </div>
+                      {selectedExecutionDetail.steps.map((step) => (
+                        <div
+                          key={step.id}
+                          className="grid grid-cols-[1fr_120px_100px] items-center border-t border-neutral-200 px-4 py-3 text-sm"
+                        >
+                          <span className="truncate font-mono text-xs text-neutral-700">
+                            {step.stepKey}
+                          </span>
+                          <StatusBadge status={step.status} />
+                          <span className="text-xs text-neutral-600">{step.attemptCount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <h3 className="text-sm font-medium">Events</h3>
+                    <div className="grid gap-2">
+                      {selectedExecutionDetail.events.map((event) => (
+                        <div
+                          key={event.id}
+                          className="grid gap-2 rounded-md border border-neutral-200 bg-white p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-medium">{event.type}</span>
+                            <span className="text-xs text-neutral-600">
+                              #{event.sequenceNo} - {formatDate(event.createdAt)}
+                            </span>
+                          </div>
+                          <pre className="max-h-40 overflow-auto rounded-md bg-neutral-950 p-3 text-xs text-neutral-100">
+                            {formatJson(event.payload)}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-neutral-600">
+                  Select an execution from history to inspect its steps and events.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -588,6 +702,21 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-lg font-semibold text-neutral-950">{value}</p>
     </div>
   );
+}
+
+function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="grid gap-2">
+      <h3 className="text-sm font-medium">{label}</h3>
+      <pre className="max-h-56 overflow-auto rounded-md bg-neutral-950 p-4 text-xs text-neutral-100">
+        {formatJson(value)}
+      </pre>
+    </div>
+  );
+}
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value ?? null, null, 2);
 }
 
 function formatDate(value: string) {
