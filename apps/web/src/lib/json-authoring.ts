@@ -1,6 +1,8 @@
 import {
+  createWorkflowVersionRequestSchema,
   createWorkflowRequestSchema,
   triggerExecutionRequestSchema,
+  type CreateWorkflowVersionRequest,
   type CreateWorkflowRequest,
   type TriggerExecutionRequest
 } from "@execloom/contracts";
@@ -95,6 +97,23 @@ export function buildCreateWorkflowRequest(input: {
 
   if (!result.success) {
     throw new Error(formatValidationIssues("Workflow", result.error.issues));
+  }
+
+  return result.data;
+}
+
+export function buildCreateWorkflowVersionRequest(input: {
+  inputSchemaText: string;
+  definitionText: string;
+}): CreateWorkflowVersionRequest {
+  const candidate = {
+    inputSchema: parseJsonObject(input.inputSchemaText, "Input schema"),
+    definition: parseJsonObject(input.definitionText, "Definition")
+  };
+  const result = createWorkflowVersionRequestSchema.safeParse(candidate);
+
+  if (!result.success) {
+    throw new Error(formatValidationIssues("Workflow version", result.error.issues));
   }
 
   return result.data;

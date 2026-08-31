@@ -1,10 +1,12 @@
 import type {
+  CreateWorkflowVersionRequest,
   CreateWorkflowRequest,
   WorkflowDetailResponse,
   WorkflowResponse,
   WorkflowVersionResponse
 } from "@execloom/contracts";
 import {
+  createDraftWorkflowVersion,
   createWorkflowWithInitialVersion,
   findUserById,
   getWorkflowDetailByOwner,
@@ -57,6 +59,25 @@ export async function listWorkflows(ownerId: string): Promise<WorkflowResponse[]
   return rows.map(mapWorkflow);
 }
 
+export async function createWorkflowVersion(
+  ownerId: string,
+  workflowId: string,
+  input: CreateWorkflowVersionRequest
+): Promise<WorkflowDetailResponse> {
+  const created = await createDraftWorkflowVersion({
+    ownerId,
+    workflowId,
+    inputSchemaJson: input.inputSchema,
+    definitionJson: input.definition
+  });
+
+  if (!created) {
+    throw new WorkflowServiceError(404, "WORKFLOW_NOT_FOUND", "Workflow was not found");
+  }
+
+  return getWorkflow(ownerId, workflowId);
+}
+
 export async function getWorkflow(
   ownerId: string,
   workflowId: string
@@ -91,10 +112,7 @@ export async function publishWorkflow(
     );
   }
 
-  return {
-    workflow: mapWorkflow(published.workflow),
-    versions: [mapWorkflowVersion(published.version)]
-  };
+  return getWorkflow(ownerId, workflowId);
 }
 
 function mapWorkflow(workflow: WorkflowRecord): WorkflowResponse {

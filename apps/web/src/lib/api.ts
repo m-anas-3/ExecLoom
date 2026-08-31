@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  CreateWorkflowVersionRequest,
   CreateWorkflowRequest,
   CurrentUserResponse,
   ExecutionDetailResponse,
@@ -70,6 +71,18 @@ export async function createWorkflow(
   input: CreateWorkflowRequest
 ): Promise<WorkflowDetailResponse> {
   return apiRequest<WorkflowDetailResponse>("/workflows", {
+    accessToken,
+    method: "POST",
+    body: input
+  });
+}
+
+export async function createWorkflowVersion(
+  accessToken: string,
+  workflowId: string,
+  input: CreateWorkflowVersionRequest
+): Promise<WorkflowDetailResponse> {
+  return apiRequest<WorkflowDetailResponse>(`/workflows/${workflowId}/versions`, {
     accessToken,
     method: "POST",
     body: input

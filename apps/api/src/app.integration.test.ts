@@ -12,7 +12,11 @@ import type {
   ExecutionListResponse,
   WorkflowDetailResponse
 } from "@execloom/contracts";
-import { createDatabaseClient, type DatabaseClient } from "@execloom/db";
+import {
+  claimQueuedExecutionStep,
+  createDatabaseClient,
+  type DatabaseClient
+} from "@execloom/db";
 import { createExecutionQueue } from "@execloom/queue";
 
 import { createApp } from "./app.js";
@@ -147,7 +151,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     await dbClient?.close();
   });
 
-  it("creates, publishes, triggers, and cancels a workflow execution", async () => {
+  it("versions, publishes, triggers, and cancels a workflow execution", async () => {
     const createResponse = await postProtectedJson("/workflows", {
       name: "Integration workflow",
       inputSchema: {},
@@ -180,6 +184,72 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(published.workflow.status, "published");
     assert.equal(published.versions[0].status, "published");
 
+    const firstVersionId = published.versions[0].id;
+    assert.equal(published.workflow.activeVersionId, firstVersionId);
+
+    const createVersionResponse = await postProtectedJson(`/workflows/${workflowId}/versions`, {
+      inputSchema: {
+        requestId: {
+          type: "string"
+        }
+      },
+      definition: {
+        steps: [
+          {
+            key: "wait-v2",
+            type: "delay",
+            config: {
+              ms: 30_000
+            }
+          }
+        ]
+      }
+    });
+
+    assert.equal(createVersionResponse.status, 201);
+    const versioned = (await createVersionResponse.json()) as WorkflowDetailResponse;
+    assert.equal(versioned.versions.length, 2);
+    assert.equal(versioned.versions[0]?.versionNo, 2);
+    assert.equal(versioned.versions[0]?.status, "draft");
+    assert.equal(versioned.workflow.activeVersionId, firstVersionId);
+
+    const replaceDraftResponse = await postProtectedJson(`/workflows/${workflowId}/versions`, {
+      inputSchema: {
+        requestId: {
+          type: "string"
+        }
+      },
+      definition: {
+        steps: [
+          {
+            key: "wait-v3",
+            type: "delay",
+            config: {
+              ms: 30_000
+            }
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceDraftResponse.status, 201);
+    const replacedDraft = (await replaceDraftResponse.json()) as WorkflowDetailResponse;
+    assert.equal(replacedDraft.versions.length, 3);
+    assert.equal(replacedDraft.versions[0]?.versionNo, 3);
+    assert.equal(replacedDraft.versions[0]?.status, "draft");
+    assert.equal(replacedDraft.versions[1]?.status, "retired");
+    assert.equal(replacedDraft.versions[2]?.status, "published");
+
+    const publishVersionResponse = await postProtectedJson(`/workflows/${workflowId}/publish`);
+
+    assert.equal(publishVersionResponse.status, 200);
+    const republished = (await publishVersionResponse.json()) as WorkflowDetailResponse;
+    assert.equal(republished.versions.length, 3);
+    assert.equal(republished.versions[0]?.status, "published");
+    assert.equal(republished.versions[1]?.status, "retired");
+    assert.equal(republished.versions[2]?.status, "retired");
+    assert.equal(republished.workflow.activeVersionId, republished.versions[0]?.id);
+
     const triggerResponse = await postProtectedJson(`/workflows/${workflowId}/executions`, {
       input: {
         requestId: "integration-test"
@@ -191,6 +261,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.ok(triggered.steps[0]);
     assert.ok(triggered.events[0]);
     executionId = triggered.execution.id as string;
+    assert.equal(triggered.execution.workflowVersionId, republished.workflow.activeVersionId);
     assert.equal(triggered.execution.status, "queued");
     assert.equal(triggered.steps[0].status, "queued");
     assert.equal(triggered.events[0].type, "execution.queued");
@@ -211,7 +282,10 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     );
     assert.equal(listedExecutions.nextCursor, null);
 
-    const cancelResponse = await postProtectedJson(`/executions/${executionId}/cancel`);
+    const [cancelResponse] = await Promise.all([
+      postProtectedJson(`/executions/${executionId}/cancel`),
+      claimQueuedExecutionStep(executionId)
+    ]);
 
     assert.equal(cancelResponse.status, 200);
     const cancelled = (await cancelResponse.json()) as ExecutionDetailResponse;
@@ -221,6 +295,10 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(
       cancelled.events.some((event: { type: string }) => event.type === "execution.cancelled"),
       true
+    );
+    assert.deepEqual(
+      cancelled.events.map((event) => event.sequenceNo),
+      cancelled.events.map((_, index) => index + 1)
     );
   });
 

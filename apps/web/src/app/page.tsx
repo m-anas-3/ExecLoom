@@ -15,14 +15,15 @@ import { AuthScreen, type AuthMode } from "@/components/app/auth-screen";
 import { DashboardHeader } from "@/components/app/dashboard-header";
 import { ExecutionDetails } from "@/components/app/execution-details";
 import { ExecutionHistory } from "@/components/app/execution-history";
-import { PublishedDefinition } from "@/components/app/published-definition";
 import { WorkflowAuthoringPanel } from "@/components/app/workflow-authoring-panel";
 import { WorkflowList } from "@/components/app/workflow-list";
 import { WorkflowOverview } from "@/components/app/workflow-overview";
+import { WorkflowVersions } from "@/components/app/workflow-versions";
 import {
   ApiError,
   cancelExecution,
   createWorkflow,
+  createWorkflowVersion,
   getExecution,
   getCurrentUser,
   getWorkflow,
@@ -34,6 +35,7 @@ import {
   triggerWorkflow
 } from "@/lib/api";
 import {
+  buildCreateWorkflowVersionRequest,
   buildCreateWorkflowRequest,
   buildTriggerExecutionRequest,
   defaultExecutionInputText,
@@ -46,6 +48,7 @@ import {
 } from "@/lib/json-authoring";
 
 const accessTokenStorageKey = "execloom.accessToken";
+const executionPollIntervalMs = 3_000;
 
 export default function Home() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -56,6 +59,7 @@ export default function Home() {
   const [workflows, setWorkflows] = useState<WorkflowResponse[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowDetailResponse | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [executions, setExecutions] = useState<ExecutionResponse[]>([]);
   const [selectedExecutionDetail, setSelectedExecutionDetail] =
     useState<ExecutionDetailResponse | null>(null);
@@ -79,6 +83,19 @@ export default function Home() {
     () => workflows.find((workflowItem) => workflowItem.id === selectedWorkflowId) ?? null,
     [selectedWorkflowId, workflows]
   );
+  const selectedVersion = useMemo(
+    () =>
+      workflowDetail?.versions.find((version) => version.id === selectedVersionId) ?? null,
+    [selectedVersionId, workflowDetail]
+  );
+  const shouldPollExecutions = useMemo(
+    () =>
+      executions.some((execution) => isActiveExecutionStatus(execution.status)) ||
+      (selectedExecutionDetail
+        ? isActiveExecutionStatus(selectedExecutionDetail.execution.status)
+        : false),
+    [executions, selectedExecutionDetail]
+  );
 
   useEffect(() => {
     const savedToken = window.localStorage.getItem(accessTokenStorageKey);
@@ -90,6 +107,64 @@ export default function Home() {
     setAccessToken(savedToken);
     void bootstrapSession(savedToken);
   }, []);
+
+  useEffect(() => {
+    if (!accessToken || !selectedWorkflowId || !shouldPollExecutions) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+    const token = accessToken;
+    const workflowId = selectedWorkflowId;
+    const selectedExecutionId = selectedExecutionDetail?.execution.id;
+
+    async function pollExecutions() {
+      try {
+        const [executionPage, executionDetail] = await Promise.all([
+          listWorkflowExecutions(token, workflowId, {
+            status: statusFilter === "all" ? undefined : statusFilter
+          }),
+          selectedExecutionId ? getExecution(token, selectedExecutionId) : null
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setExecutions(executionPage.executions);
+        setNextCursor(executionPage.nextCursor);
+
+        if (executionDetail) {
+          setSelectedExecutionDetail(executionDetail);
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setError(getErrorMessage(requestError));
+        }
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(() => void pollExecutions(), executionPollIntervalMs);
+        }
+      }
+    }
+
+    timeoutId = window.setTimeout(() => void pollExecutions(), executionPollIntervalMs);
+
+    return () => {
+      cancelled = true;
+
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [
+    accessToken,
+    selectedExecutionDetail?.execution.id,
+    selectedWorkflowId,
+    shouldPollExecutions,
+    statusFilter
+  ]);
 
   async function bootstrapSession(token: string) {
     try {
@@ -126,13 +201,19 @@ export default function Home() {
 
     const detail = await getWorkflow(token, workflowId);
     setWorkflowDetail(detail);
+    setSelectedVersionId((currentVersionId) =>
+      detail.versions.some((version) => version.id === currentVersionId)
+        ? currentVersionId
+        : (detail.workflow.activeVersionId ?? detail.versions[0]?.id ?? null)
+    );
   }
 
   async function refreshExecutions(
     workflowId = selectedWorkflowId,
     token = accessToken,
     cursor?: string,
-    filter = statusFilter
+    filter = statusFilter,
+    refreshSelectedExecution = true
   ) {
     if (!workflowId || !token) {
       return;
@@ -148,16 +229,8 @@ export default function Home() {
     );
     setNextCursor(response.nextCursor);
 
-    if (!cursor && selectedExecutionDetail) {
-      const updatedExecution = response.executions.find(
-        (execution) => execution.id === selectedExecutionDetail.execution.id
-      );
-
-      if (!updatedExecution) {
-        setSelectedExecutionDetail(null);
-      } else {
-        setSelectedExecutionDetail(await getExecution(token, updatedExecution.id));
-      }
+    if (!cursor && refreshSelectedExecution && selectedExecutionDetail) {
+      setSelectedExecutionDetail(await getExecution(token, selectedExecutionDetail.execution.id));
     }
   }
 
@@ -218,6 +291,7 @@ export default function Home() {
 
       setSelectedWorkflowId(created.workflow.id);
       setWorkflowDetail(created);
+      setSelectedVersionId(created.versions[0]?.id ?? null);
       setExecutions([]);
       setSelectedExecutionDetail(null);
       setNextCursor(null);
@@ -227,11 +301,35 @@ export default function Home() {
 
   async function handleSelectWorkflow(workflowId: string) {
     setSelectedWorkflowId(workflowId);
+    setSelectedVersionId(null);
     setSelectedExecutionDetail(null);
 
     await runAction(async () => {
       await refreshWorkflowDetail(workflowId);
-      await refreshExecutions(workflowId, accessToken, undefined, statusFilter);
+      await refreshExecutions(workflowId, accessToken, undefined, statusFilter, false);
+    });
+  }
+
+  async function handleCreateWorkflowVersion() {
+    if (!accessToken || !selectedWorkflowId) {
+      return;
+    }
+
+    await runAction(async () => {
+      const versioned = await createWorkflowVersion(
+        accessToken,
+        selectedWorkflowId,
+        buildCreateWorkflowVersionRequest({
+          inputSchemaText: newWorkflowInputSchemaText,
+          definitionText: newWorkflowDefinitionText
+        })
+      );
+
+      setWorkflowDetail(versioned);
+      setSelectedVersionId(
+        versioned.versions.find((version) => version.status === "draft")?.id ?? null
+      );
+      await refreshWorkflows(accessToken);
     });
   }
 
@@ -260,6 +358,11 @@ export default function Home() {
     });
   }
 
+  function handleLoadWorkflowVersion(version: WorkflowDetailResponse["versions"][number]) {
+    setNewWorkflowInputSchemaText(formatJson(version.inputSchema));
+    setNewWorkflowDefinitionText(formatJson(version.definition));
+  }
+
   function handleFormatJsonField(
     value: string,
     label: string,
@@ -284,6 +387,7 @@ export default function Home() {
     setUser(null);
     setWorkflows([]);
     setWorkflowDetail(null);
+    setSelectedVersionId(null);
     setExecutions([]);
     setSelectedExecutionDetail(null);
     setSelectedWorkflowId(null);
@@ -321,9 +425,11 @@ export default function Home() {
             inputSchemaText={newWorkflowInputSchemaText}
             isBusy={isBusy}
             name={newWorkflowName}
+            selectedWorkflowName={selectedWorkflow?.name ?? null}
             templates={workflowTemplates}
             onApplyTemplate={handleApplyWorkflowTemplate}
             onCreateWorkflow={(event) => void handleCreateWorkflow(event)}
+            onCreateVersion={() => void handleCreateWorkflowVersion()}
             onDefinitionTextChange={setNewWorkflowDefinitionText}
             onDescriptionChange={setNewWorkflowDescription}
             onFormatDefinition={() =>
@@ -377,6 +483,7 @@ export default function Home() {
 
                 const published = await publishWorkflow(accessToken, selectedWorkflow.id);
                 setWorkflowDetail(published);
+                setSelectedVersionId(published.workflow.activeVersionId);
                 await refreshWorkflows();
               })
             }
@@ -405,14 +512,19 @@ export default function Home() {
             selectedExecutionId={selectedExecutionDetail?.execution.id ?? null}
             selectedWorkflowId={selectedWorkflowId}
             statusFilter={statusFilter}
-            onCancelActive={() =>
+            canCancelSelected={
+              selectedExecutionDetail
+                ? isActiveExecutionStatus(selectedExecutionDetail.execution.status)
+                : false
+            }
+            onCancelSelected={() =>
               void runAction(async () => {
-                const activeExecution = executions.find(
-                  (execution) => execution.status === "queued" || execution.status === "running"
-                );
+                const selectedExecution = selectedExecutionDetail?.execution;
 
-                if (activeExecution) {
-                  await cancelExecution(accessToken, activeExecution.id);
+                if (selectedExecution && isActiveExecutionStatus(selectedExecution.status)) {
+                  setSelectedExecutionDetail(
+                    await cancelExecution(accessToken, selectedExecution.id)
+                  );
                   await refreshExecutions();
                 }
               })
@@ -428,7 +540,12 @@ export default function Home() {
           />
 
           <ExecutionDetails executionDetail={selectedExecutionDetail} />
-          <PublishedDefinition workflowDetail={workflowDetail} />
+          <WorkflowVersions
+            selectedVersion={selectedVersion}
+            workflowDetail={workflowDetail}
+            onLoadVersion={handleLoadWorkflowVersion}
+            onSelectVersion={setSelectedVersionId}
+          />
         </section>
       </div>
     </main>
@@ -445,4 +562,8 @@ function getErrorMessage(error: unknown) {
   }
 
   return "Something went wrong";
+}
+
+function isActiveExecutionStatus(status: ExecutionStatus) {
+  return status === "queued" || status === "running";
 }

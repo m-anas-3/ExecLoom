@@ -1,4 +1,4 @@
-import { Braces, Plus, RotateCcw } from "lucide-react";
+import { Braces, GitBranchPlus, Plus, RotateCcw } from "lucide-react";
 import type { FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,11 @@ export function WorkflowAuthoringPanel({
   inputSchemaText,
   isBusy,
   name,
+  selectedWorkflowName,
   templates,
   onApplyTemplate,
   onCreateWorkflow,
+  onCreateVersion,
   onDefinitionTextChange,
   onDescriptionChange,
   onFormatDefinition,
@@ -30,9 +32,11 @@ export function WorkflowAuthoringPanel({
   inputSchemaText: string;
   isBusy: boolean;
   name: string;
+  selectedWorkflowName: string | null;
   templates: WorkflowTemplate[];
   onApplyTemplate: (template: WorkflowTemplate) => void;
   onCreateWorkflow: (event: FormEvent<HTMLFormElement>) => void;
+  onCreateVersion: () => void;
   onDefinitionTextChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onFormatDefinition: () => void;
@@ -44,8 +48,10 @@ export function WorkflowAuthoringPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>New Workflow</CardTitle>
-        <CardDescription>Create a workflow from editable JSON.</CardDescription>
+        <CardTitle>Workflow Authoring</CardTitle>
+        <CardDescription>
+          {selectedWorkflowName ? `Selected: ${selectedWorkflowName}` : "No workflow selected"}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="grid gap-3" onSubmit={onCreateWorkflow}>
@@ -117,7 +123,16 @@ export function WorkflowAuthoringPanel({
           <div className="flex flex-wrap gap-2">
             <Button type="submit" disabled={isBusy}>
               <Plus className="size-4" />
-              Create
+              Create Workflow
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isBusy || !selectedWorkflowName}
+              onClick={onCreateVersion}
+            >
+              <GitBranchPlus className="size-4" />
+              New Version
             </Button>
             <Button type="button" variant="outline" onClick={onReset}>
               <RotateCcw className="size-4" />

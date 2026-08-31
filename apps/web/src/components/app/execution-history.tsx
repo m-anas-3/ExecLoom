@@ -23,7 +23,8 @@ export function ExecutionHistory({
   selectedExecutionId,
   selectedWorkflowId,
   statusFilter,
-  onCancelActive,
+  canCancelSelected,
+  onCancelSelected,
   onLoadMore,
   onRefresh,
   onSelectExecution,
@@ -35,16 +36,13 @@ export function ExecutionHistory({
   selectedExecutionId: string | null;
   selectedWorkflowId: string | null;
   statusFilter: ExecutionStatus | "all";
-  onCancelActive: () => void;
+  canCancelSelected: boolean;
+  onCancelSelected: () => void;
   onLoadMore: () => void;
   onRefresh: () => void;
   onSelectExecution: (executionId: string) => void;
   onStatusFilterChange: (filter: ExecutionStatus | "all") => void;
 }) {
-  const hasActiveExecution = executions.some(
-    (execution) => execution.status === "queued" || execution.status === "running"
-  );
-
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
@@ -78,8 +76,8 @@ export function ExecutionHistory({
           ))}
         </div>
 
-        <div className="overflow-hidden rounded-md border border-neutral-200">
-          <div className="grid grid-cols-[1fr_120px_170px] bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-600">
+        <div className="overflow-x-auto rounded-md border border-neutral-200">
+          <div className="grid min-w-[620px] grid-cols-[1fr_120px_170px] bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-600">
             <span>Execution</span>
             <span>Status</span>
             <span>Created</span>
@@ -92,6 +90,7 @@ export function ExecutionHistory({
                 key={execution.id}
                 className={cn(
                   "grid grid-cols-[1fr_120px_170px] items-center border-t border-neutral-200 px-4 py-3 text-left text-sm transition-colors hover:bg-neutral-50",
+                  "min-w-[620px]",
                   selectedExecutionId === execution.id ? "bg-neutral-50" : ""
                 )}
                 onClick={() => onSelectExecution(execution.id)}
@@ -111,9 +110,9 @@ export function ExecutionHistory({
             <History className="size-4" />
             Load More
           </Button>
-          {hasActiveExecution ? (
-            <Button variant="destructive" disabled={isBusy} onClick={onCancelActive}>
-              Cancel Active
+          {canCancelSelected ? (
+            <Button variant="destructive" disabled={isBusy} onClick={onCancelSelected}>
+              Cancel Selected
             </Button>
           ) : null}
         </div>
