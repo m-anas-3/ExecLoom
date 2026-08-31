@@ -150,6 +150,15 @@ export async function listWorkflowExecutions(
   );
 }
 
+export async function getExecution(
+  accessToken: string,
+  executionId: string
+): Promise<ExecutionDetailResponse> {
+  return apiRequest<ExecutionDetailResponse>(`/executions/${executionId}`, {
+    accessToken
+  });
+}
+
 export async function cancelExecution(
   accessToken: string,
   executionId: string
