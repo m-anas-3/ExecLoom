@@ -1,9 +1,13 @@
 import { Router } from "express";
-import { createWorkflowRequestSchema } from "@execloom/contracts";
+import {
+  createWorkflowRequestSchema,
+  createWorkflowVersionRequestSchema
+} from "@execloom/contracts";
 import { z } from "zod";
 
 import {
   createWorkflow,
+  createWorkflowVersion,
   getWorkflow,
   listWorkflows,
   publishWorkflow,
@@ -55,6 +59,37 @@ export function createWorkflowRoutes() {
       const workflow = await publishWorkflow(ownerId, workflowId);
 
       res.json(workflow);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          code: "VALIDATION_ERROR",
+          message: "Invalid workflow id"
+        });
+        return;
+      }
+
+      handleWorkflowError(error, res, next);
+    }
+  });
+
+  router.post("/:id/versions", async (req, res, next) => {
+    try {
+      const ownerId = res.locals.userId as string;
+      const workflowId = uuidSchema.parse(req.params.id);
+      const body = createWorkflowVersionRequestSchema.safeParse(req.body);
+
+      if (!body.success) {
+        res.status(400).json({
+          code: "VALIDATION_ERROR",
+          message: "Invalid workflow version request body",
+          details: body.error.flatten()
+        });
+        return;
+      }
+
+      const workflow = await createWorkflowVersion(ownerId, workflowId, body.data);
+
+      res.status(201).json(workflow);
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({

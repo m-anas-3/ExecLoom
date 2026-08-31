@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  createWorkflowVersionRequestSchema,
   createWorkflowRequestSchema,
   isSafeHttpStepUrl,
   listWorkflowExecutionsQuerySchema,
@@ -359,6 +360,34 @@ describe("workflow definition contracts", () => {
       maxAttempts: 1,
       backoffMs: 0
     });
+  });
+
+  it("validates immutable workflow version input", () => {
+    const parsed = createWorkflowVersionRequestSchema.parse({
+      definition: {
+        steps: [
+          {
+            key: "next",
+            type: "noop"
+          }
+        ]
+      }
+    });
+
+    assert.deepEqual(parsed.inputSchema, {});
+    assert.equal(parsed.definition.steps[0]?.key, "next");
+  });
+
+  it("rejects workflow versions without steps", () => {
+    assert.throws(
+      () =>
+        createWorkflowVersionRequestSchema.parse({
+          definition: {
+            steps: []
+          }
+        }),
+      /Array must contain at least 1/
+    );
   });
 
   it("rejects retry policies with invalid attempts", () => {

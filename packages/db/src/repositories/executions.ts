@@ -331,7 +331,8 @@ export async function cancelExecutionByOwner(executionId: string, ownerId: strin
         .select()
         .from(executions)
         .where(eq(executions.id, executionId))
-        .limit(1);
+        .limit(1)
+        .for("update");
 
       if (!execution) {
         return { kind: "execution_not_found" as const };
@@ -468,7 +469,8 @@ export async function claimQueuedExecutionStep(executionId: string) {
         .select()
         .from(executions)
         .where(eq(executions.id, executionId))
-        .limit(1);
+        .limit(1)
+        .for("update");
 
       if (!execution) {
         return { kind: "execution_not_found" as const };
@@ -595,7 +597,8 @@ export async function completeClaimedExecutionStep(input: {
         .select()
         .from(executions)
         .where(eq(executions.id, input.executionId))
-        .limit(1);
+        .limit(1)
+        .for("update");
 
       if (!execution) {
         return { kind: "execution_not_found" as const };
@@ -768,7 +771,8 @@ export async function failOrRetryClaimedExecutionStep(input: {
         .select()
         .from(executions)
         .where(eq(executions.id, input.executionId))
-        .limit(1);
+        .limit(1)
+        .for("update");
 
       if (!execution) {
         return { kind: "execution_not_found" as const };
@@ -963,7 +967,8 @@ export async function recoverStalledExecutionSteps(
           )
         )
         .orderBy(asc(stepRuns.startedAt))
-        .limit(input.limit ?? 25);
+        .limit(input.limit ?? 25)
+        .for("update", { of: executions, skipLocked: true });
 
       const results: StalledExecutionStepRecoveryRecord[] = [];
 

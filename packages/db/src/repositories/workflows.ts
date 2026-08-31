@@ -11,6 +11,13 @@ export type CreateWorkflowRecordInput = {
   definitionJson: unknown;
 };
 
+export type CreateWorkflowVersionRecordInput = {
+  workflowId: string;
+  ownerId: string;
+  inputSchemaJson: unknown;
+  definitionJson: unknown;
+};
+
 export async function findUserById(userId: string) {
   return withDatabase(async ({ db }) => {
     const [user] = await db
@@ -93,6 +100,70 @@ export async function getWorkflowDetailByOwner(workflowId: string, ownerId: stri
   });
 }
 
+export async function createDraftWorkflowVersion(input: CreateWorkflowVersionRecordInput) {
+  return withDatabase(async ({ db }) => {
+    return db.transaction(async (tx) => {
+      const [workflow] = await tx
+        .select()
+        .from(workflows)
+        .where(and(eq(workflows.id, input.workflowId), eq(workflows.ownerId, input.ownerId)))
+        .limit(1)
+        .for("update");
+
+      if (!workflow) {
+        return null;
+      }
+
+      const [latestVersion] = await tx
+        .select({ versionNo: workflowVersions.versionNo })
+        .from(workflowVersions)
+        .where(eq(workflowVersions.workflowId, workflow.id))
+        .orderBy(desc(workflowVersions.versionNo))
+        .limit(1);
+      const now = new Date();
+
+      await tx
+        .update(workflowVersions)
+        .set({
+          status: "retired",
+          retiredAt: now
+        })
+        .where(
+          and(
+            eq(workflowVersions.workflowId, workflow.id),
+            eq(workflowVersions.status, "draft")
+          )
+        );
+
+      const [version] = await tx
+        .insert(workflowVersions)
+        .values({
+          workflowId: workflow.id,
+          versionNo: (latestVersion?.versionNo ?? 0) + 1,
+          inputSchemaJson: input.inputSchemaJson,
+          definitionJson: input.definitionJson
+        })
+        .returning();
+
+      if (!version) {
+        throw new Error("Failed to create workflow version");
+      }
+
+      const [updatedWorkflow] = await tx
+        .update(workflows)
+        .set({ updatedAt: now })
+        .where(eq(workflows.id, workflow.id))
+        .returning();
+
+      if (!updatedWorkflow) {
+        throw new Error("Failed to update workflow");
+      }
+
+      return { workflow: updatedWorkflow, version };
+    });
+  });
+}
+
 export async function publishLatestDraftVersion(workflowId: string, ownerId: string) {
   return withDatabase(async ({ db }) => {
     return db.transaction(async (tx) => {
@@ -100,7 +171,8 @@ export async function publishLatestDraftVersion(workflowId: string, ownerId: str
         .select()
         .from(workflows)
         .where(and(eq(workflows.id, workflowId), eq(workflows.ownerId, ownerId)))
-        .limit(1);
+        .limit(1)
+        .for("update");
 
       if (!workflow) {
         return null;
@@ -126,6 +198,21 @@ export async function publishLatestDraftVersion(workflowId: string, ownerId: str
       }
 
       const now = new Date();
+
+      if (workflow.activeVersionId) {
+        await tx
+          .update(workflowVersions)
+          .set({
+            status: "retired",
+            retiredAt: now
+          })
+          .where(
+            and(
+              eq(workflowVersions.id, workflow.activeVersionId),
+              eq(workflowVersions.status, "published")
+            )
+          );
+      }
 
       const [publishedVersion] = await tx
         .update(workflowVersions)

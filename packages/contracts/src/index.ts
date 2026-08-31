@@ -108,6 +108,11 @@ export const createWorkflowRequestSchema = z.object({
   definition: workflowDefinitionSchema
 });
 
+export const createWorkflowVersionRequestSchema = z.object({
+  inputSchema: jsonObjectSchema.default({}),
+  definition: workflowDefinitionSchema
+});
+
 export const workflowResponseSchema = z.object({
   id: z.string().uuid(),
   ownerId: z.string().uuid(),
@@ -214,6 +219,7 @@ export const executionListResponseSchema = z.object({
 });
 
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
+export type CreateWorkflowVersionRequest = z.infer<typeof createWorkflowVersionRequestSchema>;
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type AuthUserResponse = z.infer<typeof authUserResponseSchema>;

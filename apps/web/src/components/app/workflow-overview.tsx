@@ -30,6 +30,11 @@ export function WorkflowOverview({
   onPublish: () => void;
   onRun: () => void;
 }) {
+  const activeVersion = workflowDetail?.versions.find(
+    (version) => version.id === selectedWorkflow?.activeVersionId
+  );
+  const hasDraftVersion = workflowDetail?.versions.some((version) => version.status === "draft");
+
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
@@ -45,7 +50,11 @@ export function WorkflowOverview({
         {selectedWorkflow ? (
           <div className="grid gap-4">
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" disabled={isBusy} onClick={onPublish}>
+              <Button
+                variant="outline"
+                disabled={isBusy || !hasDraftVersion}
+                onClick={onPublish}
+              >
                 <Rocket className="size-4" />
                 Publish
               </Button>
@@ -75,7 +84,7 @@ export function WorkflowOverview({
               <Metric label="Versions" value={String(workflowDetail?.versions.length ?? 0)} />
               <Metric
                 label="Active Version"
-                value={selectedWorkflow.activeVersionId ? "Yes" : "No"}
+                value={activeVersion ? `v${activeVersion.versionNo}` : "None"}
               />
               <Metric label="Executions" value={String(executionCount)} />
             </div>
