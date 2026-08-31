@@ -17,9 +17,11 @@ import { enqueueExecutionJob } from "@execloom/queue";
 
 type ExecutionDetailRecord = NonNullable<Awaited<ReturnType<typeof getExecutionDetailByOwner>>>;
 type ExecutionRecord = ExecutionDetailRecord["execution"];
-type ExecutionListRecord = NonNullable<
-  Awaited<ReturnType<typeof listExecutionsByWorkflowAndOwner>>
->[number];
+type ExecutionListResult = Extract<
+  Awaited<ReturnType<typeof listExecutionsByWorkflowAndOwner>>,
+  { kind: "listed" }
+>;
+type ExecutionListRecord = ExecutionListResult["executions"][number];
 type StepRunRecord = ExecutionDetailRecord["steps"][number];
 type ExecutionEventRecord = ExecutionDetailRecord["events"][number];
 
@@ -98,19 +100,25 @@ export async function listWorkflowExecutions(
   workflowId: string,
   query: ListWorkflowExecutionsQuery
 ): Promise<ExecutionListResponse> {
-  const executions = await listExecutionsByWorkflowAndOwner({
+  const result = await listExecutionsByWorkflowAndOwner({
     workflowId,
     ownerId,
     limit: query.limit,
-    status: query.status
+    status: query.status,
+    cursor: query.cursor
   });
 
-  if (!executions) {
+  if (result.kind === "workflow_not_found") {
     throw new ExecutionServiceError(404, "WORKFLOW_NOT_FOUND", "Workflow was not found");
   }
 
+  if (result.kind === "cursor_not_found") {
+    throw new ExecutionServiceError(400, "INVALID_CURSOR", "Execution history cursor is invalid");
+  }
+
   return {
-    executions: executions.map(mapExecution)
+    executions: result.executions.map(mapExecution),
+    nextCursor: result.nextCursor
   };
 }
 

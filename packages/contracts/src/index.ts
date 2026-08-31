@@ -151,7 +151,8 @@ export const executionStatusSchema = z.enum([
 
 export const listWorkflowExecutionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  status: executionStatusSchema.optional()
+  status: executionStatusSchema.optional(),
+  cursor: z.string().uuid().optional()
 });
 
 export const executionResponseSchema = z.object({
@@ -208,7 +209,8 @@ export const executionDetailResponseSchema = z.object({
 });
 
 export const executionListResponseSchema = z.object({
-  executions: z.array(executionResponseSchema)
+  executions: z.array(executionResponseSchema),
+  nextCursor: z.string().uuid().nullable()
 });
 
 export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;

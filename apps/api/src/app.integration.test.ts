@@ -209,6 +209,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
       listedExecutions.executions.every((execution) => execution.status === "queued"),
       true
     );
+    assert.equal(listedExecutions.nextCursor, null);
 
     const cancelResponse = await postProtectedJson(`/executions/${executionId}/cancel`);
 
