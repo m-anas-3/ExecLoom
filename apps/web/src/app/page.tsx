@@ -1,34 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  Braces,
-  GitBranch,
-  History,
-  Loader2,
-  LogOut,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Rocket,
-  ShieldCheck,
-  Workflow
-} from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
-import {
-  createWorkflowRequestSchema,
-  triggerExecutionRequestSchema,
-  type AuthUserResponse,
-  type CreateWorkflowRequest,
-  type ExecutionDetailResponse,
-  type ExecutionResponse,
-  type ExecutionStatus,
-  type TriggerExecutionRequest,
-  type WorkflowDetailResponse,
-  type WorkflowResponse
+import type {
+  AuthUserResponse,
+  ExecutionDetailResponse,
+  ExecutionResponse,
+  ExecutionStatus,
+  WorkflowDetailResponse,
+  WorkflowResponse
 } from "@execloom/contracts";
 
+import { AuthScreen, type AuthMode } from "@/components/app/auth-screen";
+import { DashboardHeader } from "@/components/app/dashboard-header";
+import { ExecutionDetails } from "@/components/app/execution-details";
+import { ExecutionHistory } from "@/components/app/execution-history";
+import { PublishedDefinition } from "@/components/app/published-definition";
+import { WorkflowAuthoringPanel } from "@/components/app/workflow-authoring-panel";
+import { WorkflowList } from "@/components/app/workflow-list";
+import { WorkflowOverview } from "@/components/app/workflow-overview";
 import {
   ApiError,
   cancelExecution,
@@ -43,104 +33,24 @@ import {
   register,
   triggerWorkflow
 } from "@/lib/api";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+  buildCreateWorkflowRequest,
+  buildTriggerExecutionRequest,
+  defaultExecutionInputText,
+  defaultWorkflowDefinitionText,
+  defaultWorkflowInputSchemaText,
+  formatJson,
+  parseJsonObject,
+  workflowTemplates,
+  type WorkflowTemplate
+} from "@/lib/json-authoring";
 
 const accessTokenStorageKey = "execloom.accessToken";
-const statusFilters: Array<ExecutionStatus | "all"> = [
-  "all",
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled"
-];
-
-const defaultWorkflowInputSchema: Record<string, unknown> = {};
-const workflowTemplates: Array<{
-  label: string;
-  description: string;
-  definition: CreateWorkflowRequest["definition"];
-  executionInput: TriggerExecutionRequest["input"];
-}> = [
-  {
-    label: "Noop + Delay",
-    description: "Two simple local steps for testing the worker pipeline.",
-    definition: {
-      steps: [
-        {
-          key: "start",
-          type: "noop",
-          config: {},
-          retry: {
-            maxAttempts: 1,
-            backoffMs: 0
-          }
-        },
-        {
-          key: "wait",
-          type: "delay",
-          config: {
-            ms: 1000
-          },
-          retry: {
-            maxAttempts: 1,
-            backoffMs: 0
-          }
-        }
-      ]
-    },
-    executionInput: {
-      source: "web"
-    }
-  },
-  {
-    label: "HTTP GET",
-    description: "One outbound HTTP step with timeout and retry metadata.",
-    definition: {
-      steps: [
-        {
-          key: "fetch-example",
-          type: "http",
-          config: {
-            url: "https://example.com",
-            method: "GET",
-            headers: {},
-            timeoutMs: 5000
-          },
-          retry: {
-            maxAttempts: 2,
-            backoffMs: 1000
-          }
-        }
-      ]
-    },
-    executionInput: {
-      source: "web",
-      requestId: "manual-test"
-    }
-  }
-];
-const defaultWorkflowTemplate = workflowTemplates[0]!;
-const defaultWorkflowInputSchemaText = formatJson(defaultWorkflowInputSchema);
-const defaultWorkflowDefinitionText = formatJson(defaultWorkflowTemplate.definition);
-const defaultExecutionInputText = formatJson(defaultWorkflowTemplate.executionInput);
 
 export default function Home() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUserResponse | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [workflows, setWorkflows] = useState<WorkflowResponse[]>([]);
@@ -233,7 +143,9 @@ export default function Home() {
       status: filter === "all" ? undefined : filter
     });
 
-    setExecutions((current) => (cursor ? [...current, ...response.executions] : response.executions));
+    setExecutions((current) =>
+      cursor ? [...current, ...response.executions] : response.executions
+    );
     setNextCursor(response.nextCursor);
 
     if (!cursor && selectedExecutionDetail) {
@@ -262,7 +174,17 @@ export default function Home() {
     }
   }
 
-  async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function runLocalAction(action: () => void) {
+    setError(null);
+
+    try {
+      action();
+    } catch (requestError) {
+      setError(getErrorMessage(requestError));
+    }
+  }
+
+  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     await runAction(async () => {
@@ -276,7 +198,7 @@ export default function Home() {
     });
   }
 
-  async function handleCreateWorkflow(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateWorkflow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!accessToken) {
@@ -284,7 +206,15 @@ export default function Home() {
     }
 
     await runAction(async () => {
-      const created = await createWorkflow(accessToken, buildCreateWorkflowRequest());
+      const created = await createWorkflow(
+        accessToken,
+        buildCreateWorkflowRequest({
+          name: newWorkflowName,
+          description: newWorkflowDescription,
+          inputSchemaText: newWorkflowInputSchemaText,
+          definitionText: newWorkflowDefinitionText
+        })
+      );
 
       setSelectedWorkflowId(created.workflow.id);
       setWorkflowDetail(created);
@@ -313,46 +243,17 @@ export default function Home() {
     });
   }
 
-  function buildCreateWorkflowRequest(): CreateWorkflowRequest {
-    const candidate = {
-      name: newWorkflowName,
-      description: newWorkflowDescription || undefined,
-      inputSchema: parseJsonObject(newWorkflowInputSchemaText, "Input schema"),
-      definition: parseJsonObject(newWorkflowDefinitionText, "Definition")
-    };
-    const result = createWorkflowRequestSchema.safeParse(candidate);
-
-    if (!result.success) {
-      throw new Error(formatValidationIssues("Workflow", result.error.issues));
+  async function handleSelectExecution(executionId: string) {
+    if (!accessToken) {
+      return;
     }
 
-    return result.data;
+    await runAction(async () => {
+      setSelectedExecutionDetail(await getExecution(accessToken, executionId));
+    });
   }
 
-  function buildTriggerExecutionRequest(): TriggerExecutionRequest {
-    const candidate = {
-      input: parseJsonObject(executionInputText, "Execution input")
-    };
-    const result = triggerExecutionRequestSchema.safeParse(candidate);
-
-    if (!result.success) {
-      throw new Error(formatValidationIssues("Execution input", result.error.issues));
-    }
-
-    return result.data;
-  }
-
-  function runLocalAction(action: () => void) {
-    setError(null);
-
-    try {
-      action();
-    } catch (requestError) {
-      setError(getErrorMessage(requestError));
-    }
-  }
-
-  function handleApplyWorkflowTemplate(template: (typeof workflowTemplates)[number]) {
+  function handleApplyWorkflowTemplate(template: WorkflowTemplate) {
     runLocalAction(() => {
       setNewWorkflowDefinitionText(formatJson(template.definition));
       setExecutionInputText(formatJson(template.executionInput));
@@ -377,16 +278,6 @@ export default function Home() {
     });
   }
 
-  async function handleSelectExecution(executionId: string) {
-    if (!accessToken) {
-      return;
-    }
-
-    await runAction(async () => {
-      setSelectedExecutionDetail(await getExecution(accessToken, executionId));
-    });
-  }
-
   function handleLogout() {
     window.localStorage.removeItem(accessTokenStorageKey);
     setAccessToken(null);
@@ -400,248 +291,65 @@ export default function Home() {
 
   if (!accessToken || !user) {
     return (
-      <main className="grid min-h-screen grid-cols-1 bg-neutral-950 text-white lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="flex min-h-[42vh] flex-col justify-between px-6 py-8 sm:px-10 lg:min-h-screen">
-          <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-            <Workflow className="size-5 text-emerald-300" />
-            ExecLoom
-          </div>
-          <div className="max-w-2xl">
-            <p className="mb-4 text-sm font-medium text-emerald-300">Workflow execution platform</p>
-            <h1 className="text-4xl font-semibold tracking-normal text-white sm:text-5xl">
-              Build, publish, and run backend workflows from one control plane.
-            </h1>
-          </div>
-          <div className="grid gap-3 text-sm text-neutral-300 sm:grid-cols-3">
-            <span className="inline-flex items-center gap-2">
-              <ShieldCheck className="size-4 text-sky-300" />
-              Typed contracts
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Rocket className="size-4 text-emerald-300" />
-              Worker pipeline
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <History className="size-4 text-amber-300" />
-              Execution history
-            </span>
-          </div>
-        </section>
-
-        <section className="flex items-center justify-center bg-neutral-100 px-4 py-8 text-neutral-950">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>{authMode === "login" ? "Sign in" : "Create account"}</CardTitle>
-              <CardDescription>Use your local ExecLoom API credentials.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-4" onSubmit={handleAuthSubmit}>
-                <div className="grid gap-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    minLength={authMode === "register" ? 8 : 1}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    required
-                  />
-                </div>
-                {error ? <p className="text-sm text-red-600">{error}</p> : null}
-                <Button type="submit" disabled={isBusy}>
-                  {isBusy ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {authMode === "login" ? "Sign in" : "Create account"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}
-                >
-                  {authMode === "login" ? "Need an account?" : "Already have an account?"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        </section>
-      </main>
+      <AuthScreen
+        authMode={authMode}
+        email={email}
+        error={error}
+        isBusy={isBusy}
+        password={password}
+        onAuthModeChange={setAuthMode}
+        onEmailChange={setEmail}
+        onPasswordChange={setPassword}
+        onSubmit={(event) => void handleAuthSubmit(event)}
+      />
     );
   }
 
   return (
     <main className="min-h-screen bg-neutral-100 text-neutral-950">
-      <header className="border-b border-neutral-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div>
-            <div className="flex items-center gap-2">
-              <Workflow className="size-5 text-emerald-600" />
-              <h1 className="text-lg font-semibold">ExecLoom</h1>
-            </div>
-            <p className="text-sm text-neutral-600">{user.email}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void runAction(() => refreshWorkflows())}>
-              <RefreshCw className="size-4" />
-              Refresh
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Log out" onClick={handleLogout}>
-              <LogOut className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </header>
+      <DashboardHeader
+        user={user}
+        onLogout={handleLogout}
+        onRefresh={() => void runAction(() => refreshWorkflows())}
+      />
 
       <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[340px_1fr]">
         <aside className="grid gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>New Workflow</CardTitle>
-              <CardDescription>Create a workflow from editable JSON.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-3" onSubmit={handleCreateWorkflow}>
-                <div className="grid gap-2">
-                  <Label>Template</Label>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {workflowTemplates.map((template) => (
-                      <Button
-                        key={template.label}
-                        type="button"
-                        variant="outline"
-                        title={template.description}
-                        onClick={() => handleApplyWorkflowTemplate(template)}
-                      >
-                        <Braces className="size-4" />
-                        {template.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="workflow-name">Name</Label>
-                  <Input
-                    id="workflow-name"
-                    value={newWorkflowName}
-                    onChange={(event) => setNewWorkflowName(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="workflow-description">Description</Label>
-                  <Input
-                    id="workflow-description"
-                    value={newWorkflowDescription}
-                    onChange={(event) => setNewWorkflowDescription(event.target.value)}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label htmlFor="workflow-input-schema">Input Schema JSON</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        handleFormatJsonField(
-                          newWorkflowInputSchemaText,
-                          "Input schema",
-                          setNewWorkflowInputSchemaText
-                        )
-                      }
-                    >
-                      <Braces className="size-4" />
-                      Format
-                    </Button>
-                  </div>
-                  <Textarea
-                    id="workflow-input-schema"
-                    className="min-h-24 font-mono text-xs"
-                    value={newWorkflowInputSchemaText}
-                    onChange={(event) => setNewWorkflowInputSchemaText(event.target.value)}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label htmlFor="workflow-definition">Definition JSON</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        handleFormatJsonField(
-                          newWorkflowDefinitionText,
-                          "Definition",
-                          setNewWorkflowDefinitionText
-                        )
-                      }
-                    >
-                      <Braces className="size-4" />
-                      Format
-                    </Button>
-                  </div>
-                  <Textarea
-                    id="workflow-definition"
-                    className="min-h-56 font-mono text-xs"
-                    value={newWorkflowDefinitionText}
-                    onChange={(event) => setNewWorkflowDefinitionText(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="submit" disabled={isBusy}>
-                    <Plus className="size-4" />
-                    Create
-                  </Button>
-                  <Button type="button" variant="outline" onClick={handleResetAuthoringDefaults}>
-                    <RotateCcw className="size-4" />
-                    Reset
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+          <WorkflowAuthoringPanel
+            definitionText={newWorkflowDefinitionText}
+            description={newWorkflowDescription}
+            inputSchemaText={newWorkflowInputSchemaText}
+            isBusy={isBusy}
+            name={newWorkflowName}
+            templates={workflowTemplates}
+            onApplyTemplate={handleApplyWorkflowTemplate}
+            onCreateWorkflow={(event) => void handleCreateWorkflow(event)}
+            onDefinitionTextChange={setNewWorkflowDefinitionText}
+            onDescriptionChange={setNewWorkflowDescription}
+            onFormatDefinition={() =>
+              handleFormatJsonField(
+                newWorkflowDefinitionText,
+                "Definition",
+                setNewWorkflowDefinitionText
+              )
+            }
+            onFormatInputSchema={() =>
+              handleFormatJsonField(
+                newWorkflowInputSchemaText,
+                "Input schema",
+                setNewWorkflowInputSchemaText
+              )
+            }
+            onInputSchemaTextChange={setNewWorkflowInputSchemaText}
+            onNameChange={setNewWorkflowName}
+            onReset={handleResetAuthoringDefaults}
+          />
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Workflows</CardTitle>
-              <CardDescription>{workflows.length} total</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-2">
-              {workflows.length === 0 ? (
-                <p className="rounded-md border border-dashed border-neutral-300 p-4 text-sm text-neutral-600">
-                  No workflows yet.
-                </p>
-              ) : (
-                workflows.map((workflowItem) => (
-                  <button
-                    key={workflowItem.id}
-                    className={cn(
-                      "grid gap-2 rounded-md border p-3 text-left transition-colors",
-                      selectedWorkflowId === workflowItem.id
-                        ? "border-neutral-950 bg-neutral-950 text-white"
-                        : "border-neutral-200 bg-white hover:border-neutral-300"
-                    )}
-                    onClick={() => void handleSelectWorkflow(workflowItem.id)}
-                  >
-                    <span className="text-sm font-medium">{workflowItem.name}</span>
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs opacity-70">{workflowItem.id}</span>
-                      <StatusBadge status={workflowItem.status} />
-                    </span>
-                  </button>
-                ))
-              )}
-            </CardContent>
-          </Card>
+          <WorkflowList
+            selectedWorkflowId={selectedWorkflowId}
+            workflows={workflows}
+            onSelectWorkflow={(workflowId) => void handleSelectWorkflow(workflowId)}
+          />
         </aside>
 
         <section className="grid gap-4">
@@ -651,381 +359,80 @@ export default function Home() {
             </div>
           ) : null}
 
-          <Card>
-            <CardHeader className="flex-row items-start justify-between gap-4">
-              <div>
-                <CardTitle>{selectedWorkflow?.name ?? "Workflow"}</CardTitle>
-                <CardDescription>
-                  {selectedWorkflow?.description ?? "Select or create a workflow."}
-                </CardDescription>
-              </div>
-              {selectedWorkflow ? <StatusBadge status={selectedWorkflow.status} /> : null}
-            </CardHeader>
-            <CardContent>
-              {selectedWorkflow ? (
-                <div className="grid gap-4">
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={isBusy}
-                      onClick={() =>
-                        void runAction(async () => {
-                          const published = await publishWorkflow(accessToken, selectedWorkflow.id);
-                          setWorkflowDetail(published);
-                          await refreshWorkflows();
-                        })
-                      }
-                    >
-                      <Rocket className="size-4" />
-                      Publish
-                    </Button>
-                    <Button
-                      disabled={isBusy || selectedWorkflow.status !== "published"}
-                      onClick={() =>
-                        void runAction(async () => {
-                          const triggered = await triggerWorkflow(
-                            accessToken,
-                            selectedWorkflow.id,
-                            buildTriggerExecutionRequest()
-                          );
+          <WorkflowOverview
+            executionCount={executions.length}
+            executionInputText={executionInputText}
+            isBusy={isBusy}
+            selectedWorkflow={selectedWorkflow}
+            workflowDetail={workflowDetail}
+            onExecutionInputTextChange={setExecutionInputText}
+            onFormatExecutionInput={() =>
+              handleFormatJsonField(executionInputText, "Execution input", setExecutionInputText)
+            }
+            onPublish={() =>
+              void runAction(async () => {
+                if (!selectedWorkflow) {
+                  return;
+                }
 
-                          setSelectedExecutionDetail(triggered);
-                          await refreshExecutions();
-                        })
-                      }
-                    >
-                      <Play className="size-4" />
-                      Run
-                    </Button>
-                  </div>
+                const published = await publishWorkflow(accessToken, selectedWorkflow.id);
+                setWorkflowDetail(published);
+                await refreshWorkflows();
+              })
+            }
+            onRun={() =>
+              void runAction(async () => {
+                if (!selectedWorkflow) {
+                  return;
+                }
 
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="execution-input">Execution Input</Label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleFormatJsonField(
-                            executionInputText,
-                            "Execution input",
-                            setExecutionInputText
-                          )
-                        }
-                      >
-                        <Braces className="size-4" />
-                        Format
-                      </Button>
-                    </div>
-                    <Textarea
-                      id="execution-input"
-                      className="min-h-28 font-mono text-xs"
-                      value={executionInputText}
-                      onChange={(event) => setExecutionInputText(event.target.value)}
-                    />
-                  </div>
+                const triggered = await triggerWorkflow(
+                  accessToken,
+                  selectedWorkflow.id,
+                  buildTriggerExecutionRequest(executionInputText)
+                );
 
-                  <div className="grid gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-3">
-                    <Metric label="Versions" value={String(workflowDetail?.versions.length ?? 0)} />
-                    <Metric label="Active Version" value={selectedWorkflow.activeVersionId ? "Yes" : "No"} />
-                    <Metric label="Executions" value={String(executions.length)} />
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-neutral-600">Create a workflow to begin.</p>
-              )}
-            </CardContent>
-          </Card>
+                setSelectedExecutionDetail(triggered);
+                await refreshExecutions();
+              })
+            }
+          />
 
-          <Card>
-            <CardHeader className="flex-row items-start justify-between gap-4">
-              <div>
-                <CardTitle>Execution History</CardTitle>
-                <CardDescription>Latest workflow runs from the API.</CardDescription>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={isBusy || !selectedWorkflowId}
-                onClick={() => void runAction(() => refreshExecutions())}
-              >
-                <RefreshCw className="size-4" />
-                Refresh
-              </Button>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex flex-wrap gap-2">
-                {statusFilters.map((filter) => (
-                  <Button
-                    key={filter}
-                    type="button"
-                    variant={statusFilter === filter ? "default" : "outline"}
-                    size="sm"
-                    disabled={isBusy}
-                    onClick={() => void handleStatusFilterChange(filter)}
-                  >
-                    {filter}
-                  </Button>
-                ))}
-              </div>
+          <ExecutionHistory
+            executions={executions}
+            isBusy={isBusy}
+            nextCursor={nextCursor}
+            selectedExecutionId={selectedExecutionDetail?.execution.id ?? null}
+            selectedWorkflowId={selectedWorkflowId}
+            statusFilter={statusFilter}
+            onCancelActive={() =>
+              void runAction(async () => {
+                const activeExecution = executions.find(
+                  (execution) => execution.status === "queued" || execution.status === "running"
+                );
 
-              <div className="overflow-hidden rounded-md border border-neutral-200">
-                <div className="grid grid-cols-[1fr_120px_170px] bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-600">
-                  <span>Execution</span>
-                  <span>Status</span>
-                  <span>Created</span>
-                </div>
-                {executions.length === 0 ? (
-                  <p className="px-4 py-6 text-sm text-neutral-600">No executions found.</p>
-                ) : (
-                  executions.map((execution) => (
-                    <button
-                      key={execution.id}
-                      className={cn(
-                        "grid grid-cols-[1fr_120px_170px] items-center border-t border-neutral-200 px-4 py-3 text-left text-sm transition-colors hover:bg-neutral-50",
-                        selectedExecutionDetail?.execution.id === execution.id ? "bg-neutral-50" : ""
-                      )}
-                      onClick={() => void handleSelectExecution(execution.id)}
-                    >
-                      <span className="truncate font-mono text-xs text-neutral-700">
-                        {execution.id}
-                      </span>
-                      <StatusBadge status={execution.status} />
-                      <span className="text-xs text-neutral-600">
-                        {formatDate(execution.createdAt)}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
+                if (activeExecution) {
+                  await cancelExecution(accessToken, activeExecution.id);
+                  await refreshExecutions();
+                }
+              })
+            }
+            onLoadMore={() =>
+              void runAction(() =>
+                refreshExecutions(selectedWorkflowId, accessToken, nextCursor ?? undefined)
+              )
+            }
+            onRefresh={() => void runAction(() => refreshExecutions())}
+            onSelectExecution={(executionId) => void handleSelectExecution(executionId)}
+            onStatusFilterChange={(filter) => void handleStatusFilterChange(filter)}
+          />
 
-              <div className="flex justify-between gap-3">
-                <Button
-                  variant="outline"
-                  disabled={isBusy || !nextCursor}
-                  onClick={() => void runAction(() => refreshExecutions(selectedWorkflowId, accessToken, nextCursor ?? undefined))}
-                >
-                  <History className="size-4" />
-                  Load More
-                </Button>
-                {executions.some((execution) => execution.status === "queued" || execution.status === "running") ? (
-                  <Button
-                    variant="destructive"
-                    disabled={isBusy}
-                    onClick={() =>
-                      void runAction(async () => {
-                        const activeExecution = executions.find(
-                          (execution) =>
-                            execution.status === "queued" || execution.status === "running"
-                        );
-
-                        if (activeExecution) {
-                          await cancelExecution(accessToken, activeExecution.id);
-                          await refreshExecutions();
-                        }
-                      })
-                    }
-                  >
-                    Cancel Active
-                  </Button>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex-row items-start justify-between gap-4">
-              <div>
-                <CardTitle>Execution Details</CardTitle>
-                <CardDescription>Step runs and events for the selected execution.</CardDescription>
-              </div>
-              {selectedExecutionDetail ? (
-                <StatusBadge status={selectedExecutionDetail.execution.status} />
-              ) : null}
-            </CardHeader>
-            <CardContent>
-              {selectedExecutionDetail ? (
-                <div className="grid gap-4">
-                  <div className="grid gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-3">
-                    <Metric label="Steps" value={String(selectedExecutionDetail.steps.length)} />
-                    <Metric label="Events" value={String(selectedExecutionDetail.events.length)} />
-                    <Metric
-                      label="Trigger"
-                      value={selectedExecutionDetail.execution.triggerType}
-                    />
-                  </div>
-
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <JsonBlock label="Input" value={selectedExecutionDetail.execution.input} />
-                    <JsonBlock label="Output" value={selectedExecutionDetail.execution.output} />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <h3 className="text-sm font-medium">Step Runs</h3>
-                    <div className="overflow-hidden rounded-md border border-neutral-200">
-                      <div className="grid grid-cols-[1fr_120px_100px] bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-600">
-                        <span>Step</span>
-                        <span>Status</span>
-                        <span>Attempts</span>
-                      </div>
-                      {selectedExecutionDetail.steps.map((step) => (
-                        <div
-                          key={step.id}
-                          className="grid grid-cols-[1fr_120px_100px] items-center border-t border-neutral-200 px-4 py-3 text-sm"
-                        >
-                          <span className="truncate font-mono text-xs text-neutral-700">
-                            {step.stepKey}
-                          </span>
-                          <StatusBadge status={step.status} />
-                          <span className="text-xs text-neutral-600">{step.attemptCount}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <h3 className="text-sm font-medium">Events</h3>
-                    <div className="grid gap-2">
-                      {selectedExecutionDetail.events.map((event) => (
-                        <div
-                          key={event.id}
-                          className="grid gap-2 rounded-md border border-neutral-200 bg-white p-3"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-sm font-medium">{event.type}</span>
-                            <span className="text-xs text-neutral-600">
-                              #{event.sequenceNo} - {formatDate(event.createdAt)}
-                            </span>
-                          </div>
-                          <pre className="max-h-40 overflow-auto rounded-md bg-neutral-950 p-3 text-xs text-neutral-100">
-                            {formatJson(event.payload)}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-neutral-600">
-                  Select an execution from history to inspect its steps and events.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <GitBranch className="size-4" />
-                Published Definition
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <pre className="max-h-80 overflow-auto rounded-md bg-neutral-950 p-4 text-xs text-neutral-100">
-                {JSON.stringify(workflowDetail?.versions[0]?.definition ?? {}, null, 2)}
-              </pre>
-            </CardContent>
-          </Card>
+          <ExecutionDetails executionDetail={selectedExecutionDetail} />
+          <PublishedDefinition workflowDetail={workflowDetail} />
         </section>
       </div>
     </main>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const variantByStatus: Record<string, BadgeProps["variant"]> = {
-    draft: "neutral",
-    published: "green",
-    archived: "amber",
-    queued: "blue",
-    running: "amber",
-    succeeded: "green",
-    failed: "red",
-    cancelled: "neutral"
-  };
-
-  return <Badge variant={variantByStatus[status] ?? "neutral"}>{status}</Badge>;
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase text-neutral-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-neutral-950">{value}</p>
-    </div>
-  );
-}
-
-function JsonBlock({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="grid gap-2">
-      <h3 className="text-sm font-medium">{label}</h3>
-      <pre className="max-h-56 overflow-auto rounded-md bg-neutral-950 p-4 text-xs text-neutral-100">
-        {formatJson(value)}
-      </pre>
-    </div>
-  );
-}
-
-function formatJson(value: unknown) {
-  return JSON.stringify(value ?? null, null, 2);
-}
-
-function parseWorkflowDefinition(value: string): CreateWorkflowRequest["definition"] {
-  const parsed = parseJsonObject(value, "Definition");
-
-  if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
-    throw new Error("Definition JSON must include at least one step");
-  }
-
-  return parsed as CreateWorkflowRequest["definition"];
-}
-
-function parseJsonObject(value: string, label: string): Record<string, unknown> {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`${label} must be valid JSON`);
-  }
-
-  if (!isJsonObject(parsed)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-
-  return parsed;
-}
-
-function formatValidationIssues(
-  label: string,
-  issues: Array<{
-    path: readonly unknown[];
-    message: string;
-  }>
-) {
-  const details = issues
-    .slice(0, 4)
-    .map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.map(String).join(".") : label;
-
-      return `${path}: ${issue.message}`;
-    })
-    .join("; ");
-
-  return details ? `${label} is invalid: ${details}` : `${label} is invalid`;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(new Date(value));
 }
 
 function getErrorMessage(error: unknown) {
