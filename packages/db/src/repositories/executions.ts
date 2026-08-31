@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import {
   assertExecutionTransition,
   assertStepRunTransition
@@ -50,6 +50,7 @@ export type ListExecutionsRecordInput = {
   workflowId: string;
   limit: number;
   status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  cursor?: string;
 };
 
 export type RecoverStalledExecutionStepsInput = {
@@ -76,6 +77,33 @@ export type StalledExecutionStepRecoveryRecord =
       executionId: string;
       stepRunId: string;
     };
+
+export type ListExecutionsRecordResult =
+  | {
+      kind: "listed";
+      executions: ExecutionListRecord[];
+      nextCursor: string | null;
+    }
+  | {
+      kind: "workflow_not_found";
+    }
+  | {
+      kind: "cursor_not_found";
+    };
+
+type ExecutionListRecord = {
+  id: string;
+  workflowVersionId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  triggerType: string;
+  inputJson: unknown;
+  outputJson: unknown;
+  errorJson: unknown;
+  createdAt: Date;
+  queuedAt: Date;
+  startedAt: Date | null;
+  endedAt: Date | null;
+};
 
 export async function triggerExecutionForWorkflow(input: TriggerExecutionRecordInput) {
   return withDatabase(async ({ db }) => {
@@ -214,7 +242,9 @@ export async function getExecutionDetailByOwner(executionId: string, ownerId: st
   });
 }
 
-export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsRecordInput) {
+export async function listExecutionsByWorkflowAndOwner(
+  input: ListExecutionsRecordInput
+): Promise<ListExecutionsRecordResult> {
   return withDatabase(async ({ db }) => {
     const [workflow] = await db
       .select({
@@ -225,16 +255,45 @@ export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsReco
       .limit(1);
 
     if (!workflow) {
-      return null;
+      return { kind: "workflow_not_found" as const };
     }
 
-    const executionFilters = [eq(workflowVersions.workflowId, workflow.id)];
+    const executionFilters: SQL[] = [eq(workflowVersions.workflowId, workflow.id)];
 
     if (input.status) {
       executionFilters.push(eq(executions.status, input.status));
     }
 
-    return db
+    if (input.cursor) {
+      const cursorFilters: SQL[] = [
+        eq(executions.id, input.cursor),
+        eq(workflowVersions.workflowId, workflow.id)
+      ];
+
+      if (input.status) {
+        cursorFilters.push(eq(executions.status, input.status));
+      }
+
+      const [cursorExecution] = await db
+        .select({
+          id: executions.id,
+          createdAt: executions.createdAt
+        })
+        .from(executions)
+        .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
+        .where(and(...cursorFilters))
+        .limit(1);
+
+      if (!cursorExecution) {
+        return { kind: "cursor_not_found" as const };
+      }
+
+      executionFilters.push(
+        sql`(${executions.createdAt}, ${executions.id}) < (${cursorExecution.createdAt}, ${cursorExecution.id})`
+      );
+    }
+
+    const rows = await db
       .select({
         id: executions.id,
         workflowVersionId: executions.workflowVersionId,
@@ -251,8 +310,17 @@ export async function listExecutionsByWorkflowAndOwner(input: ListExecutionsReco
       .from(executions)
       .innerJoin(workflowVersions, eq(executions.workflowVersionId, workflowVersions.id))
       .where(and(...executionFilters))
-      .orderBy(desc(executions.createdAt))
-      .limit(input.limit);
+      .orderBy(desc(executions.createdAt), desc(executions.id))
+      .limit(input.limit + 1);
+
+    const executionsPage = rows.slice(0, input.limit);
+    const nextCursor = rows.length > input.limit ? executionsPage.at(-1)?.id ?? null : null;
+
+    return {
+      kind: "listed" as const,
+      executions: executionsPage,
+      nextCursor
+    };
   });
 }
 

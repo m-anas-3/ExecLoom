@@ -71,6 +71,17 @@ describe("execution list query contracts", () => {
     });
   });
 
+  it("accepts valid execution history cursors", () => {
+    const parsed = listWorkflowExecutionsQuerySchema.parse({
+      cursor: "00000000-0000-4000-8000-000000000001"
+    });
+
+    assert.deepEqual(parsed, {
+      limit: 20,
+      cursor: "00000000-0000-4000-8000-000000000001"
+    });
+  });
+
   it("rejects invalid execution history limit values", () => {
     assert.throws(
       () =>
@@ -88,6 +99,16 @@ describe("execution list query contracts", () => {
           status: "paused"
         }),
       /Invalid enum value/
+    );
+  });
+
+  it("rejects invalid execution history cursors", () => {
+    assert.throws(
+      () =>
+        listWorkflowExecutionsQuerySchema.parse({
+          cursor: "not-a-uuid"
+        }),
+      /Invalid uuid/
     );
   });
 });
