@@ -1,9 +1,11 @@
 import type {
   AuthResponse,
+  CreateWorkflowRequest,
   CurrentUserResponse,
   ExecutionDetailResponse,
   ExecutionListResponse,
   ExecutionStatus,
+  TriggerExecutionRequest,
   WorkflowDetailResponse,
   WorkflowResponse
 } from "@execloom/contracts";
@@ -63,37 +65,14 @@ export async function getWorkflow(
   });
 }
 
-export async function createDemoWorkflow(
+export async function createWorkflow(
   accessToken: string,
-  input: {
-    name: string;
-    description?: string;
-  }
+  input: CreateWorkflowRequest
 ): Promise<WorkflowDetailResponse> {
   return apiRequest<WorkflowDetailResponse>("/workflows", {
     accessToken,
     method: "POST",
-    body: {
-      name: input.name,
-      description: input.description || undefined,
-      inputSchema: {},
-      definition: {
-        steps: [
-          {
-            key: "start",
-            type: "noop",
-            config: {}
-          },
-          {
-            key: "wait",
-            type: "delay",
-            config: {
-              ms: 1000
-            }
-          }
-        ]
-      }
-    }
+    body: input
   });
 }
 
@@ -109,16 +88,13 @@ export async function publishWorkflow(
 
 export async function triggerWorkflow(
   accessToken: string,
-  workflowId: string
+  workflowId: string,
+  input: TriggerExecutionRequest
 ): Promise<ExecutionDetailResponse> {
   return apiRequest<ExecutionDetailResponse>(`/workflows/${workflowId}/executions`, {
     accessToken,
     method: "POST",
-    body: {
-      input: {
-        source: "web"
-      }
-    }
+    body: input
   });
 }
 

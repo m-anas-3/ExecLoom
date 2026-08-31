@@ -16,9 +16,11 @@ import {
 
 import type {
   AuthUserResponse,
+  CreateWorkflowRequest,
   ExecutionDetailResponse,
   ExecutionResponse,
   ExecutionStatus,
+  TriggerExecutionRequest,
   WorkflowDetailResponse,
   WorkflowResponse
 } from "@execloom/contracts";
@@ -26,7 +28,7 @@ import type {
 import {
   ApiError,
   cancelExecution,
-  createDemoWorkflow,
+  createWorkflow,
   getExecution,
   getCurrentUser,
   getWorkflow,
@@ -48,6 +50,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 const accessTokenStorageKey = "execloom.accessToken";
@@ -59,6 +62,34 @@ const statusFilters: Array<ExecutionStatus | "all"> = [
   "failed",
   "cancelled"
 ];
+const defaultWorkflowInputSchemaText = "{}";
+const defaultWorkflowDefinitionText = JSON.stringify(
+  {
+    steps: [
+      {
+        key: "start",
+        type: "noop",
+        config: {}
+      },
+      {
+        key: "wait",
+        type: "delay",
+        config: {
+          ms: 1000
+        }
+      }
+    ]
+  },
+  null,
+  2
+);
+const defaultExecutionInputText = JSON.stringify(
+  {
+    source: "web"
+  },
+  null,
+  2
+);
 
 export default function Home() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -78,6 +109,13 @@ export default function Home() {
   const [newWorkflowDescription, setNewWorkflowDescription] = useState(
     "Demo workflow for validating the execution pipeline"
   );
+  const [newWorkflowInputSchemaText, setNewWorkflowInputSchemaText] = useState(
+    defaultWorkflowInputSchemaText
+  );
+  const [newWorkflowDefinitionText, setNewWorkflowDefinitionText] = useState(
+    defaultWorkflowDefinitionText
+  );
+  const [executionInputText, setExecutionInputText] = useState(defaultExecutionInputText);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -200,10 +238,14 @@ export default function Home() {
     }
 
     await runAction(async () => {
-      const created = await createDemoWorkflow(accessToken, {
+      const inputSchema = parseJsonObject(newWorkflowInputSchemaText, "Input schema");
+      const definition = parseWorkflowDefinition(newWorkflowDefinitionText);
+      const created = await createWorkflow(accessToken, {
         name: newWorkflowName,
-        description: newWorkflowDescription
-      });
+        description: newWorkflowDescription || undefined,
+        inputSchema,
+        definition
+      } satisfies CreateWorkflowRequest);
 
       setSelectedWorkflowId(created.workflow.id);
       setWorkflowDetail(created);
@@ -381,6 +423,25 @@ export default function Home() {
                     onChange={(event) => setNewWorkflowDescription(event.target.value)}
                   />
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="workflow-input-schema">Input Schema JSON</Label>
+                  <Textarea
+                    id="workflow-input-schema"
+                    className="min-h-24 font-mono text-xs"
+                    value={newWorkflowInputSchemaText}
+                    onChange={(event) => setNewWorkflowInputSchemaText(event.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="workflow-definition">Definition JSON</Label>
+                  <Textarea
+                    id="workflow-definition"
+                    className="min-h-56 font-mono text-xs"
+                    value={newWorkflowDefinitionText}
+                    onChange={(event) => setNewWorkflowDefinitionText(event.target.value)}
+                    required
+                  />
+                </div>
                 <Button type="submit" disabled={isBusy}>
                   <Plus className="size-4" />
                   Create
@@ -462,7 +523,11 @@ export default function Home() {
                       disabled={isBusy || selectedWorkflow.status !== "published"}
                       onClick={() =>
                         void runAction(async () => {
-                          const triggered = await triggerWorkflow(accessToken, selectedWorkflow.id);
+                          const input = parseJsonObject(executionInputText, "Execution input");
+                          const triggered = await triggerWorkflow(accessToken, selectedWorkflow.id, {
+                            input
+                          } satisfies TriggerExecutionRequest);
+
                           setSelectedExecutionDetail(triggered);
                           await refreshExecutions();
                         })
@@ -471,6 +536,16 @@ export default function Home() {
                       <Play className="size-4" />
                       Run
                     </Button>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="execution-input">Execution Input</Label>
+                    <Textarea
+                      id="execution-input"
+                      className="min-h-28 font-mono text-xs"
+                      value={executionInputText}
+                      onChange={(event) => setExecutionInputText(event.target.value)}
+                    />
                   </div>
 
                   <div className="grid gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-3">
@@ -717,6 +792,36 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 
 function formatJson(value: unknown) {
   return JSON.stringify(value ?? null, null, 2);
+}
+
+function parseWorkflowDefinition(value: string): CreateWorkflowRequest["definition"] {
+  const parsed = parseJsonObject(value, "Definition");
+
+  if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+    throw new Error("Definition JSON must include at least one step");
+  }
+
+  return parsed as CreateWorkflowRequest["definition"];
+}
+
+function parseJsonObject(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+
+  if (!isJsonObject(parsed)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+
+  return parsed;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatDate(value: string) {
