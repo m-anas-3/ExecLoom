@@ -2,10 +2,13 @@ node_modules
 .turbo
 dist
 .next
+.next-playwright
 .env
 .env.*
 !.env.example
 coverage
+playwright-report
+test-results
 *.log
 *.tsbuildinfo
 next-env.d.ts

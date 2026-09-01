@@ -14,7 +14,11 @@ const privateHttpStepUrlMessage =
   "URL must use http or https and cannot target local or private network hosts";
 
 const workflowStepBaseSchema = z.object({
-  key: z.string().min(1).max(80),
+  key: z
+    .string()
+    .min(1)
+    .max(80)
+    .refine((key) => key !== "__execloom_start__", "Step key is reserved"),
   name: z.string().min(1).max(120).optional(),
   retry: z
     .object({
@@ -39,7 +43,7 @@ export const httpStepConfigSchema = z.object({
     .url()
     .refine(isSafeHttpStepUrl, privateHttpStepUrlMessage),
   method: httpStepMethodSchema.default("GET"),
-  headers: z.record(z.string()).default({}),
+  headers: z.record(z.string().min(1), z.string()).default({}),
   body: z.unknown().optional(),
   timeoutMs: z.number().int().min(1).max(60_000).default(10_000)
 });
@@ -97,8 +101,25 @@ export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+export const workflowLayoutSchema = z.object({
+  positions: z.record(
+    z.object({
+      x: z.number().finite(),
+      y: z.number().finite()
+    })
+  )
+});
+
 export const workflowDefinitionSchema = z.object({
-  steps: z.array(workflowStepDefinitionSchema).min(1).max(50)
+  steps: z
+    .array(workflowStepDefinitionSchema)
+    .min(1)
+    .max(50)
+    .refine(
+      (steps) => new Set(steps.map((step) => step.key)).size === steps.length,
+      "Step keys must be unique"
+    ),
+  layout: workflowLayoutSchema.optional()
 });
 
 export const createWorkflowRequestSchema = z.object({
@@ -120,6 +141,7 @@ export const workflowResponseSchema = z.object({
   description: z.string().nullable(),
   status: z.enum(["draft", "published", "archived"]),
   activeVersionId: z.string().uuid().nullable(),
+  activeVersionNo: z.number().int().positive().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   archivedAt: z.string().datetime().nullable()
@@ -228,6 +250,7 @@ export type CurrentUserResponse = z.infer<typeof currentUserResponseSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
 export type WorkflowStepDefinition = z.infer<typeof workflowStepDefinitionSchema>;
+export type WorkflowLayout = z.infer<typeof workflowLayoutSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type WorkflowVersionResponse = z.infer<typeof workflowVersionResponseSchema>;
 export type WorkflowDetailResponse = z.infer<typeof workflowDetailResponseSchema>;

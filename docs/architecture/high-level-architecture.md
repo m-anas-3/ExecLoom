@@ -25,7 +25,7 @@ flowchart LR
   Worker --> External
   Worker --> Redis
 
-  API -. realtime events .-> Web
+  Web -. poll active executions .-> API
   Web -. reconnect / fetch history .-> API
   API --> DB
 ```
@@ -40,14 +40,15 @@ flowchart LR
 6. Worker picks up the job from Redis.
 7. Worker executes workflow steps one by one.
 8. Worker saves step status, outputs, errors, and events in PostgreSQL.
-9. Frontend receives live updates and can rebuild history from PostgreSQL after refresh.
+9. Frontend polls queued or running executions and stops after a terminal status.
+10. A refresh rebuilds the execution view from PostgreSQL.
 
 ## Core Responsibility Split
 
 | Component | Responsibility |
 | --- | --- |
-| Web App | UI for workflows, executions, and live timeline |
-| API | Auth, validation, workflow CRUD, trigger execution, realtime gateway |
+| Web App | Visual authoring, publishing, execution history, and status polling |
+| API | Auth, validation, workflow versioning, and execution triggers |
 | PostgreSQL | Source of truth for users, workflows, executions, steps, and events |
 | Redis/BullMQ | Job dispatch, delayed jobs, retries, worker coordination |
 | Worker | Long-running workflow execution, retries, step processing |

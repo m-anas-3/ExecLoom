@@ -1,6 +1,6 @@
 # ExecLoom
 
-Durable AI workflow engine.
+Visual workflow builder backed by a durable API, BullMQ workers, and PostgreSQL execution history.
 
 ## Repository Structure
 
@@ -21,7 +21,15 @@ infra/
 
 docs/
   adr/              Architecture decision records
+  architecture/     System and visual-builder design
   demo/             Demo scripts and walkthrough notes
 ```
 
-Start with the API, worker, database package, and workflow core before building advanced UI features.
+The current editor supports Start, No-op, Delay, and HTTP Request nodes in one validated execution chain. See [Visual Workflow Builder Architecture](./docs/architecture/visual-workflow-builder.md) for the design boundaries and end-to-end flow.
+
+## Frontend Verification
+
+```bash
+pnpm --filter @execloom/web test
+pnpm --filter @execloom/web test:e2e
+```

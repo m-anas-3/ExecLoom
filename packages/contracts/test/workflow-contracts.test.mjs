@@ -155,6 +155,56 @@ describe("workflow definition contracts", () => {
     });
   });
 
+  it("accepts optional visual editor positions without changing step order", () => {
+    const parsed = workflowDefinitionSchema.parse({
+      steps: [
+        {
+          key: "start",
+          type: "noop"
+        },
+        {
+          key: "wait",
+          type: "delay",
+          config: {
+            ms: 500
+          }
+        }
+      ],
+      layout: {
+        positions: {
+          start: { x: 260, y: 180 },
+          wait: { x: 560, y: 180 }
+        }
+      }
+    });
+
+    assert.deepEqual(
+      parsed.steps.map((step) => step.key),
+      ["start", "wait"]
+    );
+    assert.deepEqual(parsed.layout?.positions.wait, { x: 560, y: 180 });
+  });
+
+  it("rejects invalid visual editor positions", () => {
+    assert.throws(
+      () =>
+        workflowDefinitionSchema.parse({
+          steps: [
+            {
+              key: "start",
+              type: "noop"
+            }
+          ],
+          layout: {
+            positions: {
+              start: { x: Number.POSITIVE_INFINITY, y: 0 }
+            }
+          }
+        }),
+      /finite/
+    );
+  });
+
   it("accepts explicit retry policy on workflow steps", () => {
     const parsed = workflowDefinitionSchema.parse({
       steps: [
@@ -214,6 +264,25 @@ describe("workflow definition contracts", () => {
     });
 
     assert.equal(parsed.steps[0]?.config.timeoutMs, 5_000);
+  });
+
+  it("rejects http steps with empty header names", () => {
+    const result = workflowDefinitionSchema.safeParse({
+      steps: [
+        {
+          key: "call-api",
+          type: "http",
+          config: {
+            url: "https://example.com",
+            headers: {
+              "": "invalid"
+            }
+          }
+        }
+      ]
+    });
+
+    assert.equal(result.success, false);
   });
 
   it("rejects http steps without a URL", () => {
@@ -339,6 +408,21 @@ describe("workflow definition contracts", () => {
         }),
       /Array must contain at least 1/
     );
+  });
+
+  it("rejects duplicate and reserved step keys", () => {
+    const duplicateResult = workflowDefinitionSchema.safeParse({
+      steps: [
+        { key: "same-key", type: "noop", config: {} },
+        { key: "same-key", type: "delay", config: { ms: 100 } }
+      ]
+    });
+    const reservedResult = workflowDefinitionSchema.safeParse({
+      steps: [{ key: "__execloom_start__", type: "noop", config: {} }]
+    });
+
+    assert.equal(duplicateResult.success, false);
+    assert.equal(reservedResult.success, false);
   });
 
   it("defaults optional JSON fields when creating workflows", () => {
