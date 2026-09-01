@@ -67,20 +67,41 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
   });
 
   after(async () => {
-    if (executionId) {
+    if (userId && dbClient) {
+      const outboxJobs = await dbClient.queryClient<Array<{ job_id: string }>>`
+        select execution_outbox.job_id
+        from execution_outbox
+        inner join executions on execution_outbox.execution_id = executions.id
+        inner join workflow_versions
+          on executions.workflow_version_id = workflow_versions.id
+        inner join workflows on workflow_versions.workflow_id = workflows.id
+        where workflows.owner_id = ${userId}
+      `;
       const queue = createExecutionQueue();
 
       try {
-        const job = await queue.getJob(executionId);
-        await job?.remove();
+        for (const { job_id: jobId } of outboxJobs) {
+          await (await queue.getJob(jobId))?.remove();
+        }
       } catch {
-        // The worker may already have claimed the job in local development.
+        // A local worker may already have completed or removed the job.
       } finally {
         await queue.close();
       }
-    }
 
-    if (userId && dbClient) {
+      await dbClient.queryClient`
+        delete from execution_outbox
+        where execution_id in (
+          select executions.id
+          from executions
+          inner join workflow_versions
+            on executions.workflow_version_id = workflow_versions.id
+          inner join workflows
+            on workflow_versions.workflow_id = workflows.id
+          where workflows.owner_id = ${userId}
+        )
+      `;
+
       await dbClient.queryClient`
         delete from execution_events
         where execution_id in (
@@ -291,6 +312,23 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(triggered.execution.status, "queued");
     assert.equal(triggered.steps[0].status, "queued");
     assert.equal(triggered.events[0].type, "execution.queued");
+    assert.ok(dbClient);
+    const [initialOutbox] = await dbClient.queryClient<
+      Array<{
+        execution_id: string;
+        step_run_id: string;
+        attempt_no: number;
+        dispatched_at: Date | null;
+      }>
+    >`
+      select execution_id, step_run_id, attempt_no, dispatched_at
+      from execution_outbox
+      where execution_id = ${executionId}
+    `;
+    assert.ok(initialOutbox);
+    assert.equal(initialOutbox.step_run_id, triggered.steps[0].id);
+    assert.equal(initialOutbox.attempt_no, 1);
+    assert.equal(initialOutbox.dispatched_at, null);
 
     const listExecutionsResponse = await getProtectedJson(
       `/workflows/${workflowId}/executions?limit=1&status=queued`

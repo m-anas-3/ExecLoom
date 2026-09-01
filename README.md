@@ -31,6 +31,8 @@ The current editor supports Start, No-op, Delay, and HTTP Request nodes in one v
 
 HTTP steps can reference encrypted API-key or Bearer-token credentials. See [Credential Management Architecture](./docs/architecture/credential-management.md) for the security boundary and runtime resolution flow.
 
+Runnable step state and BullMQ publication are connected through a transactional PostgreSQL outbox. See [Transactional Execution Outbox](./docs/adr/002-transactional-execution-outbox.md) for the reliability guarantees and tradeoffs.
+
 ## Frontend Verification
 
 ```bash

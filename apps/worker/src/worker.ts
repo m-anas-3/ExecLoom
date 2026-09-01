@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Worker as BullWorker } from "bullmq";
 
@@ -11,17 +12,25 @@ import {
   resolveCredentialSecretForOwner
 } from "@execloom/db";
 import {
+  createExecutionQueue,
   createRedisConnectionOptions,
-  enqueueExecutionJob,
   executionJobPayloadSchema,
+  executionJobName,
+  publishExecutionJob,
   executionQueueName
 } from "@execloom/queue";
 
 import { executeWorkflowStep, type ResolvedHttpCredential } from "./executors.js";
+import {
+  dispatchExecutionOutboxBatch,
+  reconcileQueuedExecutionDispatches
+} from "./outbox-dispatcher.js";
 
 loadDotenv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 const config = loadConfig();
+const dispatcherId = randomUUID();
+const executionQueue = createExecutionQueue(config.REDIS_URL);
 
 console.log("Worker booting", {
   nodeEnv: config.NODE_ENV,
@@ -73,18 +82,7 @@ const executionWorker = new BullWorker(
       });
 
       if (failure.kind === "retry_queued") {
-        await enqueueExecutionJob(
-          {
-            executionId: claim.execution.id,
-            workflowVersionId: claim.execution.workflowVersionId
-          },
-          {
-            jobId: `${claim.execution.id}:${claim.stepRun.id}:attempt-${failure.stepRun.attemptCount + 1}`,
-            delay: failure.retryDelayMs
-          }
-        );
-
-        console.warn("Execution step retry queued", {
+        console.warn("Execution step retry persisted", {
           executionId: payload.executionId,
           stepRunId: failure.stepRun.id,
           retryDelayMs: failure.retryDelayMs,
@@ -108,18 +106,6 @@ const executionWorker = new BullWorker(
       outputJson: output
     });
 
-    if (result.kind === "next_step_queued") {
-      await enqueueExecutionJob(
-        {
-          executionId: claim.execution.id,
-          workflowVersionId: claim.execution.workflowVersionId
-        },
-        {
-          jobId: `${claim.execution.id}:${result.nextStepRun.id}`
-        }
-      );
-    }
-
     console.log("Execution job processed", {
       executionId: payload.executionId,
       result: result.kind
@@ -132,6 +118,20 @@ const executionWorker = new BullWorker(
 );
 
 let recoveryRunning = false;
+let dispatchRunning = false;
+let reconciliationRunning = false;
+
+const dispatchTimer = setInterval(() => {
+  void dispatchOutbox();
+}, config.OUTBOX_DISPATCH_INTERVAL_MS);
+dispatchTimer.unref();
+void dispatchOutbox();
+
+const reconciliationTimer = setInterval(() => {
+  void reconcileOutbox();
+}, config.OUTBOX_RECONCILE_INTERVAL_MS);
+reconciliationTimer.unref();
+void reconcileOutbox();
 
 const recoveryTimer = setInterval(() => {
   void recoverStalledSteps();
@@ -158,10 +158,25 @@ executionWorker.on("failed", (job, error) => {
   });
 });
 
+executionWorker.on("error", (error) => {
+  console.error("Execution worker connection error", {
+    error: error.message
+  });
+});
+
+executionQueue.on("error", (error) => {
+  console.error("Execution dispatcher connection error", {
+    error: error.message
+  });
+});
+
 async function shutdown() {
   console.log("Worker shutting down");
+  clearInterval(dispatchTimer);
+  clearInterval(reconciliationTimer);
   clearInterval(recoveryTimer);
   await executionWorker.close();
+  await executionQueue.close();
 }
 
 process.on("SIGTERM", () => {
@@ -200,23 +215,6 @@ async function recoverStalledSteps() {
       stalledBefore
     });
 
-    for (const recovery of recoveries) {
-      if (recovery.kind !== "retry_queued") {
-        continue;
-      }
-
-      await enqueueExecutionJob(
-        {
-          executionId: recovery.executionId,
-          workflowVersionId: recovery.workflowVersionId
-        },
-        {
-          jobId: `${recovery.executionId}:${recovery.stepRunId}:recovered-${Date.now()}`,
-          delay: recovery.retryDelayMs
-        }
-      );
-    }
-
     if (recoveries.length > 0) {
       console.warn("Recovered stalled execution steps", {
         count: recoveries.length,
@@ -229,6 +227,88 @@ async function recoverStalledSteps() {
     });
   } finally {
     recoveryRunning = false;
+  }
+}
+
+async function dispatchOutbox() {
+  if (dispatchRunning) {
+    return;
+  }
+
+  dispatchRunning = true;
+
+  try {
+    const result = await dispatchExecutionOutboxBatch({
+      dispatcherId,
+      batchSize: config.OUTBOX_DISPATCH_BATCH_SIZE,
+      leaseMs: config.OUTBOX_DISPATCH_LEASE_MS,
+      publish: async (record, payload) => {
+        if (record.jobName !== executionJobName) {
+          throw new Error(`Unsupported outbox job name: ${record.jobName}`);
+        }
+
+        await publishExecutionJob(executionQueue, payload, {
+          jobId: record.jobId
+        });
+      }
+    });
+
+    if (result.claimed > 0) {
+      console.log("Execution outbox batch processed", result);
+    }
+  } catch (error) {
+    console.error("Execution outbox dispatch failed", {
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  } finally {
+    dispatchRunning = false;
+  }
+}
+
+async function reconcileOutbox() {
+  if (reconciliationRunning) {
+    return;
+  }
+
+  reconciliationRunning = true;
+
+  try {
+    const result = await reconcileQueuedExecutionDispatches({
+      limit: config.OUTBOX_DISPATCH_BATCH_SIZE,
+      getJobState: async (jobId) => {
+        const job = await executionQueue.getJob(jobId);
+
+        if (!job) {
+          return "missing";
+        }
+
+        const state = await job.getState();
+
+        if (state === "completed" || state === "failed") {
+          return "terminal";
+        }
+
+        return state === "unknown" ? "missing" : "pending";
+      },
+      removeTerminalJob: async (jobId) => {
+        const job = await executionQueue.getJob(jobId);
+
+        if (job) {
+          await job.remove();
+        }
+      }
+    });
+
+    if (result.repaired > 0) {
+      console.warn("Repaired missing execution dispatches", result);
+      void dispatchOutbox();
+    }
+  } catch (error) {
+    console.error("Execution outbox reconciliation failed", {
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  } finally {
+    reconciliationRunning = false;
   }
 }
 

@@ -179,6 +179,48 @@ export const stepRuns = pgTable(
   })
 );
 
+export const executionOutbox = pgTable(
+  "execution_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    executionId: uuid("execution_id")
+      .notNull()
+      .references(() => executions.id),
+    stepRunId: uuid("step_run_id")
+      .notNull()
+      .references(() => stepRuns.id),
+    attemptNo: integer("attempt_no").notNull(),
+    jobId: text("job_id").notNull(),
+    jobName: text("job_name").notNull(),
+    payloadJson: jsonb("payload_json").notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    dispatchAttemptCount: integer("dispatch_attempt_count").notNull().default(0),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockedBy: text("locked_by"),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    discardedAt: timestamp("discarded_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    jobIdUnique: uniqueIndex("execution_outbox_job_id_unique").on(table.jobId),
+    stepAttemptUnique: uniqueIndex("execution_outbox_step_run_attempt_unique").on(
+      table.stepRunId,
+      table.attemptNo
+    ),
+    dispatchDueIdx: index("execution_outbox_dispatch_due_idx").on(
+      table.dispatchedAt,
+      table.discardedAt,
+      table.availableAt
+    ),
+    executionCreatedAtIdx: index("execution_outbox_execution_created_at_idx").on(
+      table.executionId,
+      table.createdAt
+    )
+  })
+);
+
 export const executionEvents = pgTable(
   "execution_events",
   {

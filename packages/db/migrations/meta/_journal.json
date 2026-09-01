@@ -15,6 +15,13 @@
       "when": 1788258311837,
       "tag": "0001_chilly_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788264044166,
+      "tag": "0002_moaning_shotgun",
+      "breakpoints": true
     }
   ]
 }

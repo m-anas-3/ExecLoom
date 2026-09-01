@@ -2,6 +2,8 @@
 
 BullMQ workers responsible for executing workflow steps outside the request lifecycle.
 
+Execution jobs are published by the worker's transactional-outbox dispatcher. API and step-state transactions persist an enqueue intent in PostgreSQL; the dispatcher publishes it to BullMQ with a deterministic job ID and retries safely when Redis is unavailable.
+
 ## Supported Step Types
 
 ### noop
