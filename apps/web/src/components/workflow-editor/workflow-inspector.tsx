@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  CredentialResponse,
   HttpStepMethod,
   WorkflowStepDefinition
 } from "@execloom/contracts";
@@ -18,6 +19,8 @@ import { startNodeId, type WorkflowGraphNode } from "@/lib/workflow-graph";
 const methodOptions: HttpStepMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 export function WorkflowInspector({
+  credentials = [],
+  credentialsError,
   selectedNode,
   selectedNodeId,
   inputSchemaText,
@@ -30,6 +33,8 @@ export function WorkflowInspector({
   onInputSchemaChange,
   onUpdateStep
 }: {
+  credentials?: CredentialResponse[];
+  credentialsError?: string | null;
   selectedNode: WorkflowGraphNode | null;
   selectedNodeId: string | null;
   inputSchemaText: string;
@@ -98,6 +103,8 @@ export function WorkflowInspector({
       ) : selectedNode ? (
         <StepFields
           key={selectedNode.id}
+          credentials={credentials}
+          credentialsError={credentialsError}
           node={selectedNode}
           readOnly={readOnly}
           onBodyErrorChange={onBodyErrorChange}
@@ -171,11 +178,15 @@ function WorkflowSettings({
 }
 
 function StepFields({
+  credentials,
+  credentialsError,
   node,
   readOnly,
   onBodyErrorChange,
   onUpdateStep
 }: {
+  credentials: CredentialResponse[];
+  credentialsError?: string | null;
   node: WorkflowGraphNode;
   readOnly: boolean;
   onBodyErrorChange?: (error: string | null) => void;
@@ -242,6 +253,8 @@ function StepFields({
 
       {step.type === "http" ? (
         <HttpFields
+          credentials={credentials}
+          credentialsError={credentialsError}
           step={step}
           readOnly={readOnly}
           onBodyErrorChange={onBodyErrorChange}
@@ -286,11 +299,15 @@ function StepFields({
 type HttpStep = Extract<WorkflowStepDefinition, { type: "http" }>;
 
 function HttpFields({
+  credentials,
+  credentialsError,
   step,
   readOnly,
   onBodyErrorChange,
   onUpdate
 }: {
+  credentials: CredentialResponse[];
+  credentialsError?: string | null;
   step: HttpStep;
   readOnly: boolean;
   onBodyErrorChange?: (error: string | null) => void;
@@ -303,6 +320,8 @@ function HttpFields({
   const [bodyText, setBodyText] = useState(initialBody);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const headers = Object.entries(step.config.headers);
+  const selectedCredentialAvailable =
+    !step.config.credentialId || credentials.some(({ id }) => id === step.config.credentialId);
 
   useEffect(() => {
     return () => onBodyErrorChange?.(null);
@@ -389,6 +408,42 @@ function HttpFields({
             updateConfig({ ...step.config, timeoutMs: Number(event.target.value) })
           }
         />
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="http-credential">Credential</Label>
+        <select
+          id="http-credential"
+          className="h-9 rounded-md border border-neutral-300 bg-white px-3 text-sm outline-none focus:border-brand disabled:bg-neutral-100 disabled:opacity-60"
+          value={step.config.credentialId ?? ""}
+          disabled={readOnly || Boolean(credentialsError)}
+          onChange={(event) => {
+            if (!event.target.value) {
+              const { credentialId: _credentialId, ...configWithoutCredential } = step.config;
+              updateConfig(configWithoutCredential);
+              return;
+            }
+
+            updateConfig({ ...step.config, credentialId: event.target.value });
+          }}
+        >
+          <option value="">No credential</option>
+          {!selectedCredentialAvailable && step.config.credentialId ? (
+            <option value={step.config.credentialId}>Unavailable credential</option>
+          ) : null}
+          {credentials.map((credential) => (
+            <option key={credential.id} value={credential.id}>
+              {credential.name} · {credential.type === "api_key" ? "API key" : "Bearer token"}
+            </option>
+          ))}
+        </select>
+        {credentialsError ? (
+          <p className="text-xs text-red-600">Credentials could not be loaded. Existing selection is preserved.</p>
+        ) : (
+          <p className="text-xs leading-5 text-neutral-500">
+            The encrypted secret is resolved by the worker when this step runs.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-2">

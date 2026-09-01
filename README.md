@@ -27,6 +27,8 @@ docs/
 
 The current editor supports Start, No-op, Delay, and HTTP Request nodes in one validated execution chain. See [Visual Workflow Builder Architecture](./docs/architecture/visual-workflow-builder.md) for the design boundaries and end-to-end flow.
 
+HTTP steps can reference encrypted API-key or Bearer-token credentials. See [Credential Management Architecture](./docs/architecture/credential-management.md) for the security boundary and runtime resolution flow.
+
 ## Frontend Verification
 
 ```bash

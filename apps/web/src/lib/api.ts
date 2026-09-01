@@ -1,5 +1,8 @@
 import type {
   AuthResponse,
+  CreateCredentialRequest,
+  CredentialListResponse,
+  CredentialResponse,
   CreateWorkflowVersionRequest,
   CreateWorkflowRequest,
   CurrentUserResponse,
@@ -7,6 +10,7 @@ import type {
   ExecutionListResponse,
   ExecutionStatus,
   TriggerExecutionRequest,
+  UpdateCredentialRequest,
   WorkflowDetailResponse,
   WorkflowResponse
 } from "@execloom/contracts";
@@ -48,6 +52,43 @@ export async function login(email: string, password: string): Promise<ApiSession
 export async function getCurrentUser(accessToken: string): Promise<CurrentUserResponse> {
   return apiRequest<CurrentUserResponse>("/auth/me", {
     accessToken
+  });
+}
+
+export async function listCredentials(accessToken: string): Promise<CredentialListResponse> {
+  return apiRequest<CredentialListResponse>("/credentials", { accessToken });
+}
+
+export async function createCredential(
+  accessToken: string,
+  input: CreateCredentialRequest
+): Promise<CredentialResponse> {
+  return apiRequest<CredentialResponse>("/credentials", {
+    accessToken,
+    method: "POST",
+    body: input
+  });
+}
+
+export async function updateCredential(
+  accessToken: string,
+  credentialId: string,
+  input: UpdateCredentialRequest
+): Promise<CredentialResponse> {
+  return apiRequest<CredentialResponse>(`/credentials/${credentialId}`, {
+    accessToken,
+    method: "PATCH",
+    body: input
+  });
+}
+
+export async function archiveCredential(
+  accessToken: string,
+  credentialId: string
+): Promise<void> {
+  await apiRequest<void>(`/credentials/${credentialId}`, {
+    accessToken,
+    method: "DELETE"
   });
 }
 
@@ -208,6 +249,10 @@ async function apiRequest<T>(
       errorBody.code ?? "REQUEST_FAILED",
       errorBody.message ?? "Request failed"
     );
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json() as Promise<T>;

@@ -47,6 +47,63 @@ test("renders and validates the authentication experience", async ({ page }) => 
   await expect(page.getByText("An account already exists for this email.", { exact: true })).toBeVisible();
 });
 
+test("manages encrypted credential metadata and assigns it to an HTTP step", async ({
+  page
+}) => {
+  const mock = await installMockApi(page, { seedWorkflow: true });
+  await installAuthenticatedSession(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.goto("/credentials");
+  await expect(page.getByRole("heading", { name: "Credentials" })).toBeVisible();
+  await expect(page.getByText("No credentials", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New credential" }).first().click();
+  await page.getByLabel("Name", { exact: true }).fill("Production API key");
+  await page.getByLabel("Header name").fill("x-production-key");
+  await page.getByLabel("Secret", { exact: true }).fill("browser-only-secret");
+  await page.getByRole("button", { name: "Create credential" }).click();
+
+  await expect(page.getByText("Production API key", { exact: true })).toBeVisible();
+  await expect(page.getByText("browser-only-secret", { exact: true })).toHaveCount(0);
+  await hideNextPortal(page);
+  await expect(page).toHaveScreenshot("credentials-desktop.png", {
+    animations: "disabled",
+    maxDiffPixelRatio: 0.015
+  });
+
+  await page.getByRole("link", { name: "Workflows" }).click();
+  await page.getByText("API health monitor", { exact: true }).click();
+  const httpNode = page.locator(".react-flow__node").filter({
+    has: page.locator('[data-step-key="check-api"]')
+  });
+  await httpNode.click();
+  await page.getByLabel("Credential").selectOption(mock.credentialId);
+  await page.getByRole("button", { name: "Save Draft" }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+  const definition = mock.state.workflowDetail?.versions[0]?.definition;
+  const savedHttpStep = definition?.steps.find((step) => step.key === "check-api");
+  expect(savedHttpStep?.type).toBe("http");
+  expect(savedHttpStep?.type === "http" ? savedHttpStep.config.credentialId : null).toBe(
+    mock.credentialId
+  );
+  expect(JSON.stringify(definition)).not.toContain("browser-only-secret");
+
+  await page.goto("/credentials");
+  await page.getByRole("button", { name: "Edit Production API key" }).click();
+  await page.getByLabel("New secret (optional)").fill("rotated-browser-secret");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Updated Production API key.", { exact: true })).toBeVisible();
+  await expect(page.getByText("rotated-browser-secret", { exact: true })).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page).toHaveScreenshot("credentials-mobile.png", {
+    animations: "disabled",
+    maxDiffPixelRatio: 0.015
+  });
+});
+
 test("registers, creates a template workflow, publishes, runs, and inspects it", async ({
   page
 }) => {
@@ -73,6 +130,9 @@ test("registers, creates a template workflow, publishes, runs, and inspects it",
 
   await expect(page.locator(".react-flow__node")).toHaveCount(3);
   await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+  await expect(page.getByRole("link", { name: "React Flow attribution" })).toBeVisible();
+  // React Flow performs its development-only attribution visibility check one second after mount.
+  await page.waitForTimeout(1_100);
 
   let leavePrompt = "";
   page.once("dialog", async (dialog) => {
@@ -172,7 +232,7 @@ test("registers, creates a template workflow, publishes, runs, and inspects it",
 test("drags initialized workflow nodes without React Flow warnings", async ({ page }) => {
   const reactFlowWarnings: string[] = [];
   page.on("console", (message) => {
-    if (message.text().includes("[React Flow]")) {
+    if (message.text().includes("React Flow")) {
       reactFlowWarnings.push(message.text());
     }
   });

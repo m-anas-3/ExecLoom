@@ -16,6 +16,8 @@ export const workflowStatus = pgEnum("workflow_status", [
   "archived"
 ]);
 
+export const credentialType = pgEnum("credential_type", ["api_key", "bearer_token"]);
+
 export const workflowVersionStatus = pgEnum("workflow_version_status", [
   "draft",
   "published",
@@ -48,6 +50,32 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
+
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    type: credentialType("type").notNull(),
+    headerName: text("header_name"),
+    encryptedSecret: text("encrypted_secret").notNull(),
+    encryptionIv: text("encryption_iv").notNull(),
+    encryptionAuthTag: text("encryption_auth_tag").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true })
+  },
+  (table) => ({
+    ownerArchivedUpdatedAtIdx: index("credentials_owner_archived_updated_at_idx").on(
+      table.ownerId,
+      table.archivedAt,
+      table.updatedAt
+    )
+  })
+);
 
 export const workflows = pgTable(
   "workflows",

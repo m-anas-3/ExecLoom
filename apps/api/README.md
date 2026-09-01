@@ -33,6 +33,19 @@ Protected routes require:
 Authorization: Bearer ACCESS_TOKEN
 ```
 
+## Credentials
+
+Credentials are user-owned and their secrets are never returned after creation:
+
+```text
+POST   /credentials
+GET    /credentials
+PATCH  /credentials/:id
+DELETE /credentials/:id
+```
+
+Configure `CREDENTIAL_ENCRYPTION_KEY` as a base64-encoded 32-byte key. Generate a production key with `openssl rand -base64 32` and keep it outside source control.
+
 ## Tests
 
 Normal tests run without local infrastructure:

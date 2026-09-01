@@ -10,6 +10,7 @@ import {
   createWorkflowWithInitialVersion,
   findUserById,
   getWorkflowDetailByOwner,
+  listCredentialIdsByOwner,
   listWorkflowsByOwner,
   publishLatestDraftVersion
 } from "@execloom/db";
@@ -42,6 +43,8 @@ export async function createWorkflow(
     throw new WorkflowServiceError(404, "OWNER_NOT_FOUND", "Workflow owner was not found");
   }
 
+  await validateCredentialReferences(ownerId, input.definition);
+
   const created = await createWorkflowWithInitialVersion({
     ownerId,
     name: input.name,
@@ -67,6 +70,8 @@ export async function createWorkflowVersion(
   workflowId: string,
   input: CreateWorkflowVersionRequest
 ): Promise<WorkflowDetailResponse> {
+  await validateCredentialReferences(ownerId, input.definition);
+
   const created = await createDraftWorkflowVersion({
     ownerId,
     workflowId,
@@ -105,6 +110,21 @@ export async function publishWorkflow(
   ownerId: string,
   workflowId: string
 ): Promise<WorkflowDetailResponse> {
+  const detail = await getWorkflowDetailByOwner(workflowId, ownerId);
+
+  if (!detail) {
+    throw new WorkflowServiceError(404, "WORKFLOW_NOT_FOUND", "Workflow was not found");
+  }
+
+  const draft = detail.versions.find((version) => version.status === "draft");
+
+  if (draft) {
+    await validateCredentialReferences(
+      ownerId,
+      draft.definitionJson as CreateWorkflowRequest["definition"]
+    );
+  }
+
   const published = await publishLatestDraftVersion(workflowId, ownerId);
 
   if (!published) {
@@ -120,6 +140,34 @@ export async function publishWorkflow(
   }
 
   return getWorkflow(ownerId, workflowId);
+}
+
+async function validateCredentialReferences(
+  ownerId: string,
+  definition: CreateWorkflowRequest["definition"]
+): Promise<void> {
+  const referencedIds = new Set(
+    definition.steps.flatMap((step) =>
+      step.type === "http" && step.config.credentialId
+        ? [step.config.credentialId]
+        : []
+    )
+  );
+
+  if (referencedIds.size === 0) {
+    return;
+  }
+
+  const availableIds = new Set(await listCredentialIdsByOwner(ownerId));
+  const unavailableId = [...referencedIds].find((id) => !availableIds.has(id));
+
+  if (unavailableId) {
+    throw new WorkflowServiceError(
+      400,
+      "CREDENTIAL_UNAVAILABLE",
+      "Workflow references a credential that is unavailable"
+    );
+  }
 }
 
 function mapWorkflow(

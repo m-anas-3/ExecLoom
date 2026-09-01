@@ -2,6 +2,7 @@
 
 import {
   workflowDefinitionSchema,
+  type CredentialResponse,
   type WorkflowDetailResponse,
   type WorkflowStepDefinition,
   type WorkflowStepType,
@@ -45,6 +46,7 @@ import {
   createWorkflow,
   createWorkflowVersion,
   getWorkflow,
+  listCredentials,
   publishWorkflow,
   triggerWorkflow
 } from "@/lib/api";
@@ -100,6 +102,8 @@ export function WorkflowEditorScreen({
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
+  const [credentials, setCredentials] = useState<CredentialResponse[]>([]);
+  const [credentialsError, setCredentialsError] = useState<string | null>(null);
 
   const hydrateVersion = useCallback(
     (detail: WorkflowDetailResponse, version: WorkflowVersionResponse, forceNewDraft = false) => {
@@ -158,6 +162,31 @@ export function WorkflowEditorScreen({
       cancelled = true;
     };
   }, [accessToken, baseVersionId, hydrateVersion, workflowId]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void listCredentials(accessToken)
+      .then((response) => {
+        if (!cancelled) {
+          setCredentials(response.credentials);
+          setCredentialsError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCredentialsError(getErrorMessage(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   const compiled = useMemo(() => compileWorkflowGraph(graph), [graph]);
   const inputSchemaResult = useMemo(() => parseInputSchema(inputSchemaText), [inputSchemaText]);
@@ -371,6 +400,8 @@ export function WorkflowEditorScreen({
 
   const inspector = selectedNodeId ? (
     <WorkflowInspector
+      credentials={credentials}
+      credentialsError={credentialsError}
       selectedNode={selectedNode}
       selectedNodeId={selectedNodeId}
       inputSchemaText={inputSchemaText}

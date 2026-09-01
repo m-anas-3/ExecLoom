@@ -44,6 +44,7 @@ export const httpStepConfigSchema = z.object({
     .refine(isSafeHttpStepUrl, privateHttpStepUrlMessage),
   method: httpStepMethodSchema.default("GET"),
   headers: z.record(z.string().min(1), z.string()).default({}),
+  credentialId: z.string().uuid().optional(),
   body: z.unknown().optional(),
   timeoutMs: z.number().int().min(1).max(60_000).default(10_000)
 });
@@ -84,6 +85,52 @@ export const authResponseSchema = z.object({
 
 export const currentUserResponseSchema = z.object({
   user: authUserResponseSchema
+});
+
+export const credentialTypeSchema = z.enum(["api_key", "bearer_token"]);
+const credentialNameSchema = z.string().trim().min(1).max(120);
+const credentialSecretSchema = z.string().min(1).max(4096);
+const credentialHeaderNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "Header name is invalid");
+
+export const createCredentialRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("api_key"),
+    name: credentialNameSchema,
+    secret: credentialSecretSchema,
+    headerName: credentialHeaderNameSchema.default("x-api-key")
+  }),
+  z.object({
+    type: z.literal("bearer_token"),
+    name: credentialNameSchema,
+    secret: credentialSecretSchema
+  })
+]);
+
+export const updateCredentialRequestSchema = z
+  .object({
+    name: credentialNameSchema.optional(),
+    secret: credentialSecretSchema.optional(),
+    headerName: credentialHeaderNameSchema.optional()
+  })
+  .refine((input) => Object.keys(input).length > 0, "At least one field is required");
+
+export const credentialResponseSchema = z.object({
+  id: z.string().uuid(),
+  ownerId: z.string().uuid(),
+  name: z.string(),
+  type: credentialTypeSchema,
+  headerName: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const credentialListResponseSchema = z.object({
+  credentials: z.array(credentialResponseSchema)
 });
 
 export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
@@ -247,6 +294,11 @@ export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type AuthUserResponse = z.infer<typeof authUserResponseSchema>;
 export type AuthResponse = z.infer<typeof authResponseSchema>;
 export type CurrentUserResponse = z.infer<typeof currentUserResponseSchema>;
+export type CredentialType = z.infer<typeof credentialTypeSchema>;
+export type CreateCredentialRequest = z.infer<typeof createCredentialRequestSchema>;
+export type UpdateCredentialRequest = z.infer<typeof updateCredentialRequestSchema>;
+export type CredentialResponse = z.infer<typeof credentialResponseSchema>;
+export type CredentialListResponse = z.infer<typeof credentialListResponseSchema>;
 export type WorkflowStepType = z.infer<typeof workflowStepTypeSchema>;
 export type HttpStepMethod = z.infer<typeof httpStepMethodSchema>;
 export type WorkflowStepDefinition = z.infer<typeof workflowStepDefinitionSchema>;

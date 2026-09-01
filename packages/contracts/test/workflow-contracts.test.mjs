@@ -2,15 +2,56 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  createCredentialRequestSchema,
   createWorkflowVersionRequestSchema,
   createWorkflowRequestSchema,
   isSafeHttpStepUrl,
   listWorkflowExecutionsQuerySchema,
   loginRequestSchema,
   registerRequestSchema,
+  updateCredentialRequestSchema,
   workflowDefinitionSchema,
   workflowStepTypeSchema
 } from "../dist/index.js";
+
+describe("credential contracts", () => {
+  it("defaults API key header names", () => {
+    const parsed = createCredentialRequestSchema.parse({
+      type: "api_key",
+      name: "Production API",
+      secret: "secret-value"
+    });
+
+    assert.equal(parsed.headerName, "x-api-key");
+  });
+
+  it("accepts Bearer tokens without a header name", () => {
+    assert.deepEqual(
+      createCredentialRequestSchema.parse({
+        type: "bearer_token",
+        name: "Partner token",
+        secret: "secret-value"
+      }),
+      {
+        type: "bearer_token",
+        name: "Partner token",
+        secret: "secret-value"
+      }
+    );
+  });
+
+  it("rejects invalid header names and empty updates", () => {
+    assert.throws(() =>
+      createCredentialRequestSchema.parse({
+        type: "api_key",
+        name: "Production API",
+        secret: "secret-value",
+        headerName: "invalid header"
+      })
+    );
+    assert.throws(() => updateCredentialRequestSchema.parse({}));
+  });
+});
 
 describe("auth contracts", () => {
   it("normalizes register email addresses", () => {

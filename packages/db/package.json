@@ -18,7 +18,7 @@
     "db:migrate": "drizzle-kit migrate",
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "echo \"No tests yet for @execloom/db\"",
+    "test": "pnpm run build && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

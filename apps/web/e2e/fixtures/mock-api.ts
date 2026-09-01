@@ -1,4 +1,5 @@
 import type {
+  CredentialResponse,
   ExecutionDetailResponse,
   ExecutionResponse,
   WorkflowDetailResponse,
@@ -12,18 +13,21 @@ const ownerId = "11111111-1111-4111-8111-111111111111";
 const workflowId = "22222222-2222-4222-8222-222222222222";
 const versionId = "33333333-3333-4333-8333-333333333333";
 const executionId = "44444444-4444-4444-8444-444444444444";
+const credentialId = "55555555-5555-4555-8555-555555555555";
 
 type MockState = {
   workflowDetail: WorkflowDetailResponse | null;
   executionDetail: ExecutionDetailResponse | null;
   executionReads: number;
+  credentials: CredentialResponse[];
 };
 
 export async function installMockApi(page: Page, options: { seedWorkflow?: boolean } = {}) {
   const state: MockState = {
     workflowDetail: options.seedWorkflow ? createSeedWorkflow() : null,
     executionDetail: null,
-    executionReads: 0
+    executionReads: 0,
+    credentials: []
   };
 
   await page.route("**/api/backend/**", async (route) => {
@@ -33,7 +37,8 @@ export async function installMockApi(page: Page, options: { seedWorkflow?: boole
   return {
     state,
     workflowId,
-    executionId
+    executionId,
+    credentialId
   };
 }
 
@@ -74,6 +79,59 @@ async function handleApiRoute(route: Route, state: MockState) {
     await json(route, {
       user: { id: ownerId, email: "builder@example.com", createdAt: now }
     });
+    return;
+  }
+
+  if (path === "/credentials" && method === "GET") {
+    await json(route, { credentials: state.credentials });
+    return;
+  }
+
+  if (path === "/credentials" && method === "POST") {
+    const body = request.postDataJSON() as {
+      name: string;
+      type: "api_key" | "bearer_token";
+      headerName?: string;
+    };
+    const credential: CredentialResponse = {
+      id: credentialId,
+      ownerId,
+      name: body.name,
+      type: body.type,
+      headerName: body.type === "api_key" ? body.headerName ?? "x-api-key" : null,
+      createdAt: now,
+      updatedAt: now
+    };
+    state.credentials = [credential, ...state.credentials];
+    await json(route, credential, 201);
+    return;
+  }
+
+  if (path === `/credentials/${credentialId}` && method === "PATCH") {
+    const body = request.postDataJSON() as { name?: string; headerName?: string };
+    const existing = state.credentials.find((credential) => credential.id === credentialId);
+
+    if (!existing) {
+      await json(route, { code: "CREDENTIAL_NOT_FOUND", message: "Credential not found" }, 404);
+      return;
+    }
+
+    const updated = {
+      ...existing,
+      ...(body.name ? { name: body.name } : {}),
+      ...(body.headerName ? { headerName: body.headerName } : {}),
+      updatedAt: now
+    };
+    state.credentials = state.credentials.map((credential) =>
+      credential.id === credentialId ? updated : credential
+    );
+    await json(route, updated);
+    return;
+  }
+
+  if (path === `/credentials/${credentialId}` && method === "DELETE") {
+    state.credentials = state.credentials.filter((credential) => credential.id !== credentialId);
+    await route.fulfill({ status: 204 });
     return;
   }
 
@@ -352,6 +410,10 @@ function createQueuedExecution(
 }
 
 function completeExecution(detail: ExecutionDetailResponse): ExecutionDetailResponse {
+  if (detail.execution.status === "succeeded") {
+    return detail;
+  }
+
   return {
     execution: {
       ...detail.execution,
