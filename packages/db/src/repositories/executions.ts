@@ -496,9 +496,11 @@ export async function claimQueuedExecutionStep(executionId: string) {
 
       const [version] = await tx
         .select({
-          definitionJson: workflowVersions.definitionJson
+          definitionJson: workflowVersions.definitionJson,
+          ownerId: workflows.ownerId
         })
         .from(workflowVersions)
+        .innerJoin(workflows, eq(workflowVersions.workflowId, workflows.id))
         .where(eq(workflowVersions.id, execution.workflowVersionId))
         .limit(1);
 
@@ -580,7 +582,8 @@ export async function claimQueuedExecutionStep(executionId: string) {
         kind: "claimed" as const,
         execution: runningExecution,
         stepRun: runningStep,
-        stepDefinition
+        stepDefinition,
+        workflowOwnerId: version.ownerId
       };
     });
   });

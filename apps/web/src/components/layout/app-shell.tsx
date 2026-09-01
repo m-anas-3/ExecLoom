@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, LogOut, Menu, Plus, Workflow } from "lucide-react";
+import { Boxes, KeyRound, LogOut, Menu, Plus, Workflow } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
@@ -93,6 +93,7 @@ function WorkspaceNavigation({
   onLogout: () => void;
 }) {
   const workflowsActive = pathname.startsWith("/workflows");
+  const credentialsActive = pathname.startsWith("/credentials");
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -125,6 +126,20 @@ function WorkspaceNavigation({
           {workflowsActive ? <span className="absolute inset-y-2 left-0 w-0.5 rounded bg-brand" /> : null}
           <Boxes className={cn("size-4", workflowsActive ? "text-brand" : "")} />
           Workflows
+        </Link>
+        <Link
+          href="/credentials"
+          onClick={onNavigate}
+          className={cn(
+            "relative mt-1 flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
+            credentialsActive
+              ? "bg-neutral-100 text-neutral-950"
+              : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"
+          )}
+        >
+          {credentialsActive ? <span className="absolute inset-y-2 left-0 w-0.5 rounded bg-brand" /> : null}
+          <KeyRound className={cn("size-4", credentialsActive ? "text-brand" : "")} />
+          Credentials
         </Link>
       </nav>
       <div className="shrink-0 border-t border-neutral-200 p-3">

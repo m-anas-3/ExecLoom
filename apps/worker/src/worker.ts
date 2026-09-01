@@ -7,7 +7,8 @@ import {
   claimQueuedExecutionStep,
   completeClaimedExecutionStep,
   failOrRetryClaimedExecutionStep,
-  recoverStalledExecutionSteps
+  recoverStalledExecutionSteps,
+  resolveCredentialSecretForOwner
 } from "@execloom/db";
 import {
   createRedisConnectionOptions,
@@ -16,7 +17,7 @@ import {
   executionQueueName
 } from "@execloom/queue";
 
-import { executeWorkflowStep } from "./executors.js";
+import { executeWorkflowStep, type ResolvedHttpCredential } from "./executors.js";
 
 loadDotenv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
@@ -53,10 +54,15 @@ const executionWorker = new BullWorker(
     let output: unknown;
 
     try {
+      const credential = await resolveStepCredential(
+        claim.stepDefinition,
+        claim.workflowOwnerId
+      );
       output = await executeWorkflowStep({
         step: claim.stepDefinition,
         executionInput: claim.execution.inputJson,
-        stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson
+        stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson,
+        credential
       });
     } catch (error) {
       const failure = await failOrRetryClaimedExecutionStep({
@@ -224,4 +230,28 @@ async function recoverStalledSteps() {
   } finally {
     recoveryRunning = false;
   }
+}
+
+async function resolveStepCredential(
+  step: { type: string; config: Record<string, unknown> },
+  ownerId: string
+): Promise<ResolvedHttpCredential | undefined> {
+  if (step.type !== "http" || step.config.credentialId === undefined) {
+    return undefined;
+  }
+
+  if (typeof step.config.credentialId !== "string") {
+    throw new Error("HTTP step credential id is invalid");
+  }
+
+  const credential = await resolveCredentialSecretForOwner(
+    step.config.credentialId,
+    ownerId
+  );
+
+  if (!credential) {
+    throw new Error("HTTP step credential is unavailable");
+  }
+
+  return credential;
 }

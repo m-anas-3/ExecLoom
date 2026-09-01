@@ -138,6 +138,82 @@ describe("executeWorkflowStep", () => {
     }
   });
 
+  it("injects API key credentials after manual headers", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestHeaders: RequestInit["headers"];
+
+    globalThis.fetch = async (_url, init) => {
+      requestHeaders = init?.headers;
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      await executeWorkflowStep({
+        step: createStep({
+          type: "http",
+          config: {
+            url: "https://api.example.com/tasks",
+            headers: {
+              "X-API-Key": "manual-value"
+            },
+            credentialId: "11111111-1111-4111-8111-111111111111"
+          }
+        }),
+        executionInput: {},
+        stepInput: {},
+        credential: {
+          type: "api_key",
+          headerName: "x-api-key",
+          secret: "credential-value"
+        }
+      });
+
+      assert.equal(new Headers(requestHeaders).get("x-api-key"), "credential-value");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("injects Bearer credentials without returning the secret", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestHeaders: RequestInit["headers"];
+
+    globalThis.fetch = async (_url, init) => {
+      requestHeaders = init?.headers;
+      return Response.json({ ok: true });
+    };
+
+    try {
+      const output = await executeWorkflowStep({
+        step: createStep({
+          type: "http",
+          config: {
+            url: "https://api.example.com/tasks",
+            headers: {
+              Authorization: "Bearer manual-value"
+            },
+            credentialId: "11111111-1111-4111-8111-111111111111"
+          }
+        }),
+        executionInput: {},
+        stepInput: {},
+        credential: {
+          type: "bearer_token",
+          headerName: null,
+          secret: "credential-value"
+        }
+      });
+
+      assert.equal(
+        new Headers(requestHeaders).get("authorization"),
+        "Bearer credential-value"
+      );
+      assert.equal(JSON.stringify(output).includes("credential-value"), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("times out slow http steps", async () => {
     const originalFetch = globalThis.fetch;
 

@@ -4,6 +4,7 @@ import { getDatabaseHealth } from "@execloom/db";
 
 import { createAuthRoutes } from "./modules/auth/auth.routes.js";
 import { requireAuth } from "./modules/auth/auth.middleware.js";
+import { createCredentialRoutes } from "./modules/credentials/credentials.routes.js";
 import { createExecutionRoutes } from "./modules/executions/executions.routes.js";
 import { createWorkflowRoutes } from "./modules/workflows/workflows.routes.js";
 
@@ -26,6 +27,7 @@ export function createApp() {
 
   app.use("/auth", createAuthRoutes());
   app.use(requireAuth);
+  app.use("/credentials", createCredentialRoutes());
   app.use(createExecutionRoutes());
   app.use("/workflows", createWorkflowRoutes());
 

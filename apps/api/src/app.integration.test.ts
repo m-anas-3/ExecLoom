@@ -7,6 +7,8 @@ import { config as loadDotenv } from "dotenv";
 
 import type {
   AuthResponse,
+  CredentialListResponse,
+  CredentialResponse,
   CurrentUserResponse,
   ExecutionDetailResponse,
   ExecutionListResponse,
@@ -32,6 +34,7 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
   let userId: string;
   let accessToken: string;
   let executionId: string | undefined;
+  let secondaryUserId: string | undefined;
 
   before(async () => {
     dbClient = createDatabaseClient();
@@ -130,9 +133,21 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
       `;
 
       await dbClient.queryClient`
+        delete from credentials
+        where owner_id = ${userId}
+      `;
+
+      await dbClient.queryClient`
         delete from users
         where id = ${userId}
       `;
+
+      if (secondaryUserId) {
+        await dbClient.queryClient`
+          delete from users
+          where id = ${secondaryUserId}
+        `;
+      }
     }
 
     if (server) {
@@ -313,6 +328,123 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     );
   });
 
+  it("manages masked credentials and protects active workflow references", async () => {
+    const secret = "integration-secret-value";
+    const createCredentialResponse = await postProtectedJson("/credentials", {
+      type: "api_key",
+      name: "Integration API key",
+      headerName: "x-integration-key",
+      secret
+    });
+
+    assert.equal(createCredentialResponse.status, 201);
+    const rawCreatedBody = await createCredentialResponse.text();
+    assert.equal(rawCreatedBody.includes(secret), false);
+    assert.equal(rawCreatedBody.includes("encryptedSecret"), false);
+    const credential = JSON.parse(rawCreatedBody) as CredentialResponse;
+    assert.equal(credential.type, "api_key");
+    assert.equal(credential.headerName, "x-integration-key");
+
+    assert.ok(dbClient);
+    const [storedCredential] = await dbClient.queryClient<
+      Array<{
+        encrypted_secret: string;
+        encryption_iv: string;
+        encryption_auth_tag: string;
+      }>
+    >`
+      select encrypted_secret, encryption_iv, encryption_auth_tag
+      from credentials
+      where id = ${credential.id}
+    `;
+    assert.ok(storedCredential);
+    assert.notEqual(storedCredential.encrypted_secret, secret);
+    assert.equal(storedCredential.encrypted_secret.includes(secret), false);
+    assert.ok(storedCredential.encryption_iv.length > 0);
+    assert.ok(storedCredential.encryption_auth_tag.length > 0);
+
+    const secondaryRegisterResponse = await postPublicJson("/auth/register", {
+      email: `api-integration-secondary-${Date.now()}@example.com`,
+      password: "local-test-password"
+    });
+    assert.equal(secondaryRegisterResponse.status, 201);
+    const secondaryAuth = (await secondaryRegisterResponse.json()) as AuthResponse;
+    secondaryUserId = secondaryAuth.user.id;
+    const crossOwnerUpdate = await fetch(`${baseUrl}/credentials/${credential.id}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${secondaryAuth.accessToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ name: "Unauthorized update" })
+    });
+    assert.equal(crossOwnerUpdate.status, 404);
+
+    const listResponse = await getProtectedJson("/credentials");
+    assert.equal(listResponse.status, 200);
+    const listed = (await listResponse.json()) as CredentialListResponse;
+    assert.equal(listed.credentials.some(({ id }) => id === credential.id), true);
+
+    const rotateResponse = await patchProtectedJson(`/credentials/${credential.id}`, {
+      secret: "rotated-integration-secret"
+    });
+    assert.equal(rotateResponse.status, 200);
+    assert.equal((await rotateResponse.text()).includes("rotated-integration-secret"), false);
+
+    const createWorkflowResponse = await postProtectedJson("/workflows", {
+      name: "Credential integration workflow",
+      inputSchema: {},
+      definition: {
+        steps: [
+          {
+            key: "authenticated-request",
+            type: "http",
+            config: {
+              url: "https://example.com/api",
+              credentialId: credential.id
+            }
+          }
+        ]
+      }
+    });
+    assert.equal(createWorkflowResponse.status, 201);
+    const workflow = (await createWorkflowResponse.json()) as WorkflowDetailResponse;
+    const credentialWorkflowId = workflow.workflow.id as string;
+
+    assert.equal(
+      (await postProtectedJson(`/workflows/${credentialWorkflowId}/publish`)).status,
+      200
+    );
+    const blockedArchive = await deleteProtected(`/credentials/${credential.id}`);
+    assert.equal(blockedArchive.status, 409);
+    assert.equal(
+      ((await blockedArchive.json()) as { code: string }).code,
+      "CREDENTIAL_IN_USE"
+    );
+
+    assert.equal(
+      (
+        await postProtectedJson(`/workflows/${credentialWorkflowId}/versions`, {
+          inputSchema: {},
+          definition: {
+            steps: [{ key: "replacement", type: "noop", config: {} }]
+          }
+        })
+      ).status,
+      201
+    );
+    assert.equal(
+      (await postProtectedJson(`/workflows/${credentialWorkflowId}/publish`)).status,
+      200
+    );
+
+    assert.equal((await deleteProtected(`/credentials/${credential.id}`)).status, 204);
+    const afterArchive = (await (
+      await getProtectedJson("/credentials")
+    ).json()) as CredentialListResponse;
+    assert.equal(afterArchive.credentials.some(({ id }) => id === credential.id), false);
+  });
+
   async function postPublicJson(path: string, body?: unknown) {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",
@@ -336,6 +468,26 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
 
   async function getProtectedJson(path: string) {
     return fetch(`${baseUrl}${path}`, {
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+  }
+
+  async function patchProtectedJson(path: string, body: unknown) {
+    return fetch(`${baseUrl}${path}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function deleteProtected(path: string) {
+    return fetch(`${baseUrl}${path}`, {
+      method: "DELETE",
       headers: {
         authorization: `Bearer ${accessToken}`
       }

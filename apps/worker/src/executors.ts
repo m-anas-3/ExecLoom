@@ -5,6 +5,13 @@ export type StepExecutionInput = {
   step: WorkflowStepDefinitionRecord;
   executionInput: unknown;
   stepInput: unknown;
+  credential?: ResolvedHttpCredential;
+};
+
+export type ResolvedHttpCredential = {
+  type: "api_key" | "bearer_token";
+  headerName: string | null;
+  secret: string;
 };
 
 export async function executeWorkflowStep(input: StepExecutionInput): Promise<unknown> {
@@ -20,7 +27,7 @@ export async function executeWorkflowStep(input: StepExecutionInput): Promise<un
       return executeDelayStep(input.step);
 
     case "http":
-      return executeHttpStep(input.step);
+      return executeHttpStep(input.step, input.credential);
 
     default:
       throw new Error(`Unsupported workflow step type: ${input.step.type}`);
@@ -53,8 +60,11 @@ function getDelayMs(config: Record<string, unknown>): number {
   return rawMs;
 }
 
-async function executeHttpStep(step: WorkflowStepDefinitionRecord): Promise<unknown> {
-  const config = getHttpConfig(step.config);
+async function executeHttpStep(
+  step: WorkflowStepDefinitionRecord,
+  credential?: ResolvedHttpCredential
+): Promise<unknown> {
+  const config = getHttpConfig(step.config, credential);
   const abortController = new AbortController();
   const timeout = setTimeout(() => {
     abortController.abort();
@@ -94,7 +104,10 @@ async function executeHttpStep(step: WorkflowStepDefinitionRecord): Promise<unkn
   };
 }
 
-function getHttpConfig(config: Record<string, unknown>) {
+function getHttpConfig(
+  config: Record<string, unknown>,
+  credential?: ResolvedHttpCredential
+) {
   const url = config.url;
   const method = config.method ?? "GET";
   const headers = config.headers ?? {};
@@ -117,13 +130,28 @@ function getHttpConfig(config: Record<string, unknown>) {
     throw new Error("HTTP step config.headers must be an object with string values");
   }
 
+  const requestHeaders = new Headers({
+    "content-type": "application/json"
+  });
+
+  for (const [name, value] of Object.entries(headers)) {
+    requestHeaders.set(name, value);
+  }
+
+  if (credential?.type === "api_key") {
+    if (!credential.headerName) {
+      throw new Error("API key credential does not have a header name");
+    }
+
+    requestHeaders.set(credential.headerName, credential.secret);
+  } else if (credential?.type === "bearer_token") {
+    requestHeaders.set("authorization", `Bearer ${credential.secret}`);
+  }
+
   return {
     url,
     method,
-    headers: {
-      "content-type": "application/json",
-      ...headers
-    },
+    headers: Object.fromEntries(requestHeaders.entries()),
     body: config.body,
     timeoutMs: getHttpTimeoutMs(config)
   };
