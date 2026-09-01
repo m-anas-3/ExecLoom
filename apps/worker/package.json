@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "NODE_OPTIONS='--conditions=development' tsx watch src/worker.ts",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
