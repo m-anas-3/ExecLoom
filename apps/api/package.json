@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "NODE_OPTIONS='--conditions=development' tsx watch src/server.ts",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "NODE_OPTIONS='--conditions=development' node --import tsx --test src/**/*.test.ts",
+    "test": "NODE_OPTIONS='--conditions=development' node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
