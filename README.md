@@ -1,5 +1,7 @@
 # ExecLoom
 
+[![Code quality](https://github.com/m-anas-3/ExecLoom/actions/workflows/code-quality.yml/badge.svg)](https://github.com/m-anas-3/ExecLoom/actions/workflows/code-quality.yml)
+
 Visual workflow builder backed by a durable API, BullMQ workers, and PostgreSQL execution history.
 
 ## Repository Structure
