@@ -30,33 +30,30 @@ export function createRedisConnectionOptions(redisUrl = loadConfig().REDIS_URL):
   };
 }
 
-export function createExecutionQueue(redisUrl = loadConfig().REDIS_URL) {
-  return new Queue<ExecutionJobPayload>(executionQueueName, {
+export function createExecutionQueue(
+  redisUrl = loadConfig().REDIS_URL,
+  queueName = executionQueueName
+) {
+  return new Queue<ExecutionJobPayload>(queueName, {
     connection: createRedisConnectionOptions(redisUrl)
   });
 }
 
-export async function enqueueExecutionJob(
+export async function publishExecutionJob(
+  queue: Queue<ExecutionJobPayload>,
   payload: ExecutionJobPayload,
   options: JobsOptions = {}
 ) {
-  const queue = createExecutionQueue();
+  const validatedPayload = executionJobPayloadSchema.parse(payload);
 
-  try {
-    const validatedPayload = executionJobPayloadSchema.parse(payload);
-
-    return await queue.add(executionJobName, validatedPayload, {
-      jobId: validatedPayload.executionId,
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 1_000
-      },
-      removeOnComplete: 100,
-      removeOnFail: 500,
-      ...options
-    });
-  } finally {
-    await queue.close();
-  }
+  return queue.add(executionJobName, validatedPayload, {
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 1_000
+    },
+    removeOnComplete: 100,
+    removeOnFail: 500,
+    ...options
+  });
 }

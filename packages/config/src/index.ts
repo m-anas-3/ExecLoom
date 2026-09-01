@@ -16,6 +16,10 @@ const envSchema = z.object({
     .refine((value) => isBase64Key(value, 32), "Must be a base64-encoded 32-byte key"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  OUTBOX_DISPATCH_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
+  OUTBOX_DISPATCH_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(25),
+  OUTBOX_DISPATCH_LEASE_MS: z.coerce.number().int().positive().default(30_000),
+  OUTBOX_RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   WORKER_STALLED_STEP_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   WORKER_RECOVERY_INTERVAL_MS: z.coerce.number().int().positive().default(60_000)
 }).superRefine((config, context) => {

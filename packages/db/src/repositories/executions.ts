@@ -6,6 +6,10 @@ import {
 
 import { withDatabase, type DatabaseClient } from "../client.js";
 import {
+  createExecutionDispatchIntent,
+  discardPendingExecutionDispatches
+} from "./execution-outbox.js";
+import {
   executionEvents,
   executions,
   stepRuns,
@@ -185,6 +189,13 @@ export async function triggerExecutionForWorkflow(input: TriggerExecutionRecordI
       if (!event) {
         throw new Error("Failed to create execution event");
       }
+
+      await createExecutionDispatchIntent(tx, {
+        executionId: execution.id,
+        workflowVersionId: execution.workflowVersionId,
+        stepRunId: stepRun.id,
+        attemptNo: stepRun.attemptCount + 1
+      });
 
       return {
         kind: "created" as const,
@@ -452,6 +463,12 @@ export async function cancelExecutionByOwner(executionId: string, ownerId: strin
         }
       ]);
 
+      await discardPendingExecutionDispatches(
+        tx,
+        execution.id,
+        "Execution cancelled before dispatch"
+      );
+
       const detail = await getExecutionTimeline(tx, cancelledExecution);
 
       return {
@@ -702,6 +719,13 @@ export async function completeClaimedExecutionStep(input: {
           }
         ]);
 
+        await createExecutionDispatchIntent(tx, {
+          executionId: execution.id,
+          workflowVersionId: execution.workflowVersionId,
+          stepRunId: nextStepRun.id,
+          attemptNo: nextStepRun.attemptCount + 1
+        });
+
         return {
           kind: "next_step_queued" as const,
           execution,
@@ -804,6 +828,7 @@ export async function failOrRetryClaimedExecutionStep(input: {
         assertStepRunTransition("retrying", "queued");
 
         const retryAt = new Date();
+        const retryAvailableAt = new Date(retryAt.getTime() + input.retryPolicy.backoffMs);
         const nextSequenceNo = await getNextEventSequenceNo(tx, execution.id);
 
         const [retryingStep] = await tx
@@ -861,6 +886,14 @@ export async function failOrRetryClaimedExecutionStep(input: {
             }
           }
         ]);
+
+        await createExecutionDispatchIntent(tx, {
+          executionId: execution.id,
+          workflowVersionId: execution.workflowVersionId,
+          stepRunId: queuedStep.id,
+          attemptNo: queuedStep.attemptCount + 1,
+          availableAt: retryAvailableAt
+        });
 
         return {
           kind: "retry_queued" as const,
@@ -994,6 +1027,7 @@ export async function recoverStalledExecutionSteps(
           assertStepRunTransition("retrying", "queued");
 
           const retryAt = new Date();
+          const retryAvailableAt = new Date(retryAt.getTime() + retryPolicy.backoffMs);
           const nextSequenceNo = await getNextEventSequenceNo(tx, stalled.execution.id);
 
           const [retryingStep] = await tx
@@ -1056,6 +1090,14 @@ export async function recoverStalledExecutionSteps(
               }
             }
           ]);
+
+          await createExecutionDispatchIntent(tx, {
+            executionId: stalled.execution.id,
+            workflowVersionId: stalled.execution.workflowVersionId,
+            stepRunId: queuedStep.id,
+            attemptNo: queuedStep.attemptCount + 1,
+            availableAt: retryAvailableAt
+          });
 
           results.push({
             kind: "retry_queued" as const,
