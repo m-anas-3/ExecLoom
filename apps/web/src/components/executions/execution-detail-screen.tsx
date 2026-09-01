@@ -251,7 +251,7 @@ export function ExecutionDetailScreen({
 
           {error ? <InlineNotice variant="error" className="m-4">{error}</InlineNotice> : null}
 
-          <div className="h-[440px] border-b border-neutral-200" data-testid="execution-graph">
+          <div className="h-[240px] border-b border-neutral-200 sm:h-[420px]" data-testid="execution-graph">
             <WorkflowCanvas
               graph={definitionToWorkflowGraph(version.definition)}
               readOnly

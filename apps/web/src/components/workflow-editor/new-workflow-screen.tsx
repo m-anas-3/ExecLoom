@@ -111,7 +111,7 @@ export function NewWorkflowScreen() {
                   type="button"
                   className={cn(
                     "grid w-full grid-cols-[40px_minmax(0,1fr)_24px] items-center gap-3 border-b border-neutral-200 px-4 py-4 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neutral-950",
-                    isSelected ? "bg-neutral-50" : "bg-white hover:bg-neutral-50"
+                    isSelected ? "bg-brand-soft/50" : "bg-white hover:bg-neutral-50"
                   )}
                   aria-pressed={isSelected}
                   onClick={() => selectTemplate(template)}
@@ -120,7 +120,7 @@ export function NewWorkflowScreen() {
                     className={cn(
                       "grid size-10 place-items-center rounded-md border",
                       isSelected
-                        ? "border-neutral-950 bg-neutral-950 text-white"
+                        ? "border-brand bg-brand text-white"
                         : "border-neutral-200 bg-neutral-50 text-neutral-600"
                     )}
                   >
@@ -136,7 +136,7 @@ export function NewWorkflowScreen() {
                     className={cn(
                       "grid size-5 place-items-center rounded-full border",
                       isSelected
-                        ? "border-neutral-950 bg-neutral-950 text-white"
+                        ? "border-brand bg-brand text-white"
                         : "border-neutral-300 text-transparent"
                     )}
                     aria-hidden="true"
@@ -185,7 +185,7 @@ export function NewWorkflowScreen() {
             </InlineNotice>
           </div>
           <div className="flex justify-end border-t border-neutral-200 bg-neutral-50 px-4 py-3">
-            <Button type="submit" disabled={!trimmedName}>
+            <Button type="submit" variant="accent" disabled={!trimmedName}>
               Open editor
               <ArrowRight className="size-4" />
             </Button>

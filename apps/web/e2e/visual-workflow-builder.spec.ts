@@ -5,6 +5,48 @@ import {
   installMockApi
 } from "./fixtures/mock-api";
 
+test("renders and validates the authentication experience", async ({ page }) => {
+  await installMockApi(page);
+
+  for (const viewport of [
+    { name: "desktop", width: 1440, height: 900 },
+    { name: "tablet", width: 1024, height: 768 },
+    { name: "mobile", width: 390, height: 844 }
+  ]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+
+    await page.goto("/login");
+    await expect(page.getByRole("heading", { name: "Sign in to ExecLoom" })).toBeVisible();
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+    await expect(page).toHaveScreenshot(`login-${viewport.name}.png`, {
+      animations: "disabled",
+      maxDiffPixelRatio: 0.015
+    });
+
+    await page.goto("/register");
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+    await expect(page).toHaveScreenshot(`register-${viewport.name}.png`, {
+      animations: "disabled",
+      maxDiffPixelRatio: 0.015
+    });
+  }
+
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("wrong@example.com");
+  await page.getByLabel("Password", { exact: true }).fill("wrong-password");
+  await page.getByRole("button", { name: "Show password" }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Email or password is incorrect.", { exact: true })).toBeVisible();
+
+  await page.goto("/register");
+  await page.getByLabel("Email").fill("taken@example.com");
+  await page.getByLabel("Password", { exact: true }).fill("strong-password");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByText("An account already exists for this email.", { exact: true })).toBeVisible();
+});
+
 test("registers, creates a template workflow, publishes, runs, and inspects it", async ({
   page
 }) => {
@@ -13,7 +55,7 @@ test("registers, creates a template workflow, publishes, runs, and inspects it",
 
   await page.goto("/register");
   await page.getByLabel("Email").fill("builder@example.com");
-  await page.getByLabel("Password").fill("strong-password");
+  await page.getByLabel("Password", { exact: true }).fill("strong-password");
   await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page).toHaveURL(/\/workflows$/);
@@ -104,6 +146,20 @@ test("registers, creates a template workflow, publishes, runs, and inspects it",
       await openVisualRoute(page, route.path, route.readyText, route.name !== "execution-detail");
       await expect(page.getByRole("link", { name: "ExecLoom" })).toBeVisible();
       await page.evaluate(() => window.scrollTo(0, 0));
+      const pageWidth = await page.evaluate(() => ({
+        client: document.documentElement.clientWidth,
+        scroll: document.documentElement.scrollWidth
+      }));
+      expect(pageWidth.scroll).toBeLessThanOrEqual(pageWidth.client);
+
+      if (viewport.name === "mobile" && route.name === "execution-detail") {
+        await expect(page.getByTestId("execution-graph")).toHaveCSS("height", "240px");
+      }
+
+      if (viewport.name === "mobile" && route.name === "version-history") {
+        await expect(page.getByTestId("version-graph-preview")).toHaveCSS("height", "240px");
+      }
+
       await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
       await expect(page).toHaveScreenshot(`${route.name}-${viewport.name}.png`, {
         animations: "disabled",
@@ -169,7 +225,7 @@ test("renders a nonblank workflow canvas across desktop, tablet, and mobile", as
 
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await page.goto(`/workflows/${mock.workflowId}`);
+    await openVisualRoute(page, `/workflows/${mock.workflowId}`, "API health monitor", true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page.locator(".react-flow__node")).toHaveCount(3, { timeout: 20_000 });
     await expect(page.locator(".react-flow__edge")).toHaveCount(2);
@@ -179,6 +235,17 @@ test("renders a nonblank workflow canvas across desktop, tablet, and mobile", as
     await expect(canvas).toBeVisible();
     await expectNonBlankPixels(page, canvas);
     await page.evaluate(() => window.scrollTo(0, 0));
+
+    if (viewport.name === "mobile") {
+      const appHeaderBox = await page.locator("header.sticky").boundingBox();
+      const workflowHeaderBox = await page.locator("main > header").boundingBox();
+      expect(appHeaderBox).not.toBeNull();
+      expect(workflowHeaderBox).not.toBeNull();
+      expect(appHeaderBox!.y).toBe(0);
+      expect(appHeaderBox!.height).toBe(56);
+      expect(workflowHeaderBox!.y).toBeGreaterThanOrEqual(appHeaderBox!.height);
+    }
+
     await expect(page).toHaveScreenshot(`workflow-editor-${viewport.name}.png`, {
       animations: "disabled",
       maxDiffPixelRatio: 0.015

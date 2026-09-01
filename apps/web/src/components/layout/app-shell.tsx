@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, LogOut, Menu, Workflow } from "lucide-react";
+import { Boxes, LogOut, Menu, Plus, Workflow } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
@@ -29,8 +29,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 xl:grid xl:grid-cols-[224px_minmax(0,1fr)]">
-      <aside className="hidden min-h-screen border-r border-neutral-800 bg-neutral-950 text-white xl:sticky xl:top-0 xl:flex xl:h-screen xl:flex-col">
+    <div className="min-h-screen bg-workspace xl:grid xl:grid-cols-[240px_minmax(0,1fr)]">
+      <aside className="hidden min-h-screen border-r border-neutral-200 bg-white text-neutral-950 xl:sticky xl:top-0 xl:flex xl:h-screen xl:flex-col">
         <WorkspaceNavigation
           pathname={pathname}
           email={auth.user?.email}
@@ -60,7 +60,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
           <SheetContent
             side="left"
-            className="w-[280px] gap-0 border-neutral-800 bg-neutral-950 p-0 text-white sm:max-w-[280px]"
+            className="w-[280px] gap-0 border-neutral-200 bg-white p-0 text-neutral-950 sm:max-w-[280px]"
           >
             <SheetHeader className="sr-only">
               <SheetTitle>Workspace navigation</SheetTitle>
@@ -96,34 +96,45 @@ function WorkspaceNavigation({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-16 shrink-0 items-center gap-2.5 border-b border-neutral-800 px-5 text-sm font-semibold">
-        <BrandMark />
-        ExecLoom
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-neutral-200 px-4">
+        <Link href="/workflows" onClick={onNavigate} className="flex items-center gap-2.5 text-sm font-semibold">
+          <BrandMark />
+          ExecLoom
+        </Link>
+        <Link
+          href="/workflows/new"
+          onClick={onNavigate}
+          className="grid size-9 place-items-center rounded-md border border-neutral-300 bg-white text-neutral-700 transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          aria-label="Create workflow"
+          title="Create workflow"
+        >
+          <Plus className="size-4" />
+        </Link>
       </div>
-      <nav className="flex-1 px-3 py-4" aria-label="Workspace navigation">
+      <nav className="flex-1 px-3 py-5" aria-label="Workspace navigation">
         <Link
           href="/workflows"
           onClick={onNavigate}
           className={cn(
             "relative flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
             workflowsActive
-              ? "bg-neutral-800 text-white"
-              : "text-neutral-400 hover:bg-neutral-900 hover:text-white"
+              ? "bg-neutral-100 text-neutral-950"
+              : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"
           )}
         >
-          {workflowsActive ? <span className="absolute inset-y-2 left-0 w-0.5 rounded bg-sky-400" /> : null}
-          <Boxes className="size-4" />
+          {workflowsActive ? <span className="absolute inset-y-2 left-0 w-0.5 rounded bg-brand" /> : null}
+          <Boxes className={cn("size-4", workflowsActive ? "text-brand" : "")} />
           Workflows
         </Link>
       </nav>
-      <div className="shrink-0 border-t border-neutral-800 p-3">
+      <div className="shrink-0 border-t border-neutral-200 p-3">
         <div className="mb-2 min-w-0 px-2 py-1">
           <p className="text-[11px] font-medium uppercase text-neutral-500">Signed in</p>
-          <p className="mt-1 truncate text-sm text-neutral-200">{email}</p>
+          <p className="mt-1 truncate text-sm text-neutral-800">{email}</p>
         </div>
         <button
           type="button"
-          className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm text-neutral-400 transition-colors hover:bg-neutral-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onClick={onLogout}
         >
           <LogOut className="size-4" />
@@ -139,7 +150,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
     <span
       className={cn(
         "grid shrink-0 place-items-center rounded-md",
-        compact ? "size-7 bg-neutral-950 text-white" : "size-8 bg-white text-neutral-950"
+        compact ? "size-7 bg-brand-soft text-brand" : "size-8 bg-brand-soft text-brand"
       )}
     >
       <Workflow className={compact ? "size-3.5" : "size-4"} />

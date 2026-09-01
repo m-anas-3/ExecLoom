@@ -178,13 +178,13 @@ export function ExecutionHistoryScreen({ workflowId }: { workflowId: string }) {
               Inspect status, version, timing, output, and errors for each run.
             </p>
           </div>
-          <div className="flex max-w-full gap-1 overflow-x-auto rounded-md border border-neutral-200 bg-white p-1">
+          <div className="grid w-full grid-cols-3 gap-1 rounded-md border border-neutral-200 bg-white p-1 sm:flex sm:w-auto">
             {statusFilters.map((filter) => (
               <button
                 key={filter}
                 type="button"
                 className={cn(
-                  "h-7 shrink-0 rounded px-2.5 text-xs font-medium capitalize",
+                  "h-7 min-w-0 rounded px-2 text-xs font-medium capitalize sm:px-2.5",
                   filter === statusFilter
                     ? "bg-neutral-950 text-white"
                     : "text-neutral-600 hover:bg-neutral-100"

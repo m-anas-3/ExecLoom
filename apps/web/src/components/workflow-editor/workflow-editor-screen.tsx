@@ -411,7 +411,7 @@ export function WorkflowEditorScreen({
           {isPublishing ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}
           <span className="hidden sm:inline">Publish</span>
         </Button>
-        <Button type="button" size="sm" disabled={!isDirty || !isValid || isSaving || isPublishing} onClick={() => void saveDraft()}>
+        <Button type="button" variant="accent" size="sm" disabled={!isDirty || !isValid || isSaving || isPublishing} onClick={() => void saveDraft()}>
           {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
           <span className="hidden sm:inline">Save Draft</span>
           <span className="sm:hidden">Save</span>

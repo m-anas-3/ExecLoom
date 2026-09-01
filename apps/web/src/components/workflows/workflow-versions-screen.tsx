@@ -144,7 +144,7 @@ export function WorkflowVersionsScreen({ workflowId }: { workflowId: string }) {
             </Link>
           </div>
 
-          <div className="h-[430px] border-b border-neutral-200" data-testid="version-graph-preview">
+          <div className="h-[240px] border-b border-neutral-200 sm:h-[400px]" data-testid="version-graph-preview">
             <WorkflowCanvas
               graph={definitionToWorkflowGraph(selectedVersion.definition)}
               selectedNodeId={null}
@@ -200,7 +200,7 @@ function VersionButton({
       className={cn(
         "mb-1 grid w-full gap-2 rounded-md border px-3 py-3 text-left last:mb-0",
         selected
-          ? "border-neutral-950 bg-neutral-950 text-white"
+          ? "border-brand/40 bg-brand-soft/60 text-neutral-950"
           : "border-transparent hover:border-neutral-200 hover:bg-neutral-50"
       )}
       onClick={onSelect}
@@ -208,17 +208,12 @@ function VersionButton({
       <span className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold">Version {version.versionNo}</span>
         {active ? (
-          <span
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium",
-              selected ? "bg-emerald-400/20 text-emerald-200" : "bg-emerald-50 text-emerald-700"
-            )}
-          >
+          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
             Active
           </span>
         ) : null}
       </span>
-      <span className={cn("text-xs", selected ? "text-neutral-400" : "text-neutral-500")}>
+      <span className="text-xs text-neutral-500">
         {version.definition.steps.length} {version.definition.steps.length === 1 ? "step" : "steps"} · {formatDate(version.createdAt)}
       </span>
     </button>

@@ -79,7 +79,7 @@ export function WorkflowLibrary() {
         </div>
         <Link
           href="/workflows/new"
-          className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-md bg-neutral-950 px-4 text-sm font-medium text-white transition-colors hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2 sm:self-auto"
+          className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-md bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 sm:self-auto"
         >
           <CirclePlus className="size-4" />
           New workflow
@@ -210,7 +210,7 @@ function EmptyWorkflowLibrary() {
             <Link
               key={template.id}
               href={`/workflows/new?template=${template.id}`}
-              className="group rounded-md border border-neutral-200 bg-white p-4 transition-colors hover:border-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950"
+              className="group rounded-md border border-neutral-200 bg-white p-4 transition-colors hover:border-brand/50 hover:bg-brand-soft/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             >
               <div className="flex items-center gap-3">
                 <span className="grid size-9 shrink-0 place-items-center rounded-md border border-neutral-200 bg-neutral-50 text-neutral-700">

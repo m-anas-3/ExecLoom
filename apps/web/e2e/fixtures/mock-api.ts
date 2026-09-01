@@ -51,6 +51,17 @@ async function handleApiRoute(route: Route, state: MockState) {
 
   if ((path === "/auth/register" || path === "/auth/login") && method === "POST") {
     const body = request.postDataJSON() as { email: string };
+
+    if (path === "/auth/login" && body.email === "wrong@example.com") {
+      await json(route, { code: "INVALID_CREDENTIALS", message: "Invalid credentials" }, 401);
+      return;
+    }
+
+    if (path === "/auth/register" && body.email === "taken@example.com") {
+      await json(route, { code: "EMAIL_IN_USE", message: "Email already in use" }, 409);
+      return;
+    }
+
     await json(route, {
       accessToken: "mock-access-token",
       tokenType: "Bearer",
