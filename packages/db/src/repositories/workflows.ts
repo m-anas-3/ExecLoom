@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
 
 import { withDatabase } from "../client.js";
 import { users, workflowVersions, workflows } from "../schema.js";
@@ -71,7 +71,15 @@ export async function createWorkflowWithInitialVersion(input: CreateWorkflowReco
 export async function listWorkflowsByOwner(ownerId: string) {
   return withDatabase(async ({ db }) => {
     return db
-      .select()
+      .select({
+        ...getTableColumns(workflows),
+        activeVersionNo: sql<number | null>`(
+          select ${workflowVersions.versionNo}
+          from ${workflowVersions}
+          where ${workflowVersions.id} = ${workflows.activeVersionId}
+          limit 1
+        )`.as("active_version_no")
+      })
       .from(workflows)
       .where(and(eq(workflows.ownerId, ownerId)))
       .orderBy(desc(workflows.createdAt));

@@ -1,20 +1,13 @@
-import type { BadgeProps } from "@/components/ui/badge";
 import { Badge } from "@/components/ui/badge";
+import { getStatusPresentation } from "@/lib/status-presentation";
+import { cn } from "@/lib/utils";
 
-export function StatusBadge({ status }: { status: string }) {
-  const variantByStatus: Record<string, BadgeProps["variant"]> = {
-    draft: "neutral",
-    published: "green",
-    archived: "amber",
-    queued: "blue",
-    running: "amber",
-    succeeded: "green",
-    failed: "red",
-    cancelled: "neutral",
-    pending: "neutral",
-    retrying: "amber",
-    skipped: "neutral"
-  };
+export function StatusBadge({ status, className }: { status: string; className?: string }) {
+  const presentation = getStatusPresentation(status);
 
-  return <Badge variant={variantByStatus[status] ?? "neutral"}>{status}</Badge>;
+  return (
+    <Badge className={cn("border", presentation.badgeClassName, className)} variant="neutral">
+      {presentation.label}
+    </Badge>
+  );
 }

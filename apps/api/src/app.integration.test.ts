@@ -250,6 +250,17 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(republished.versions[2]?.status, "retired");
     assert.equal(republished.workflow.activeVersionId, republished.versions[0]?.id);
 
+    const workflowListResponse = await getProtectedJson("/workflows");
+
+    assert.equal(workflowListResponse.status, 200);
+    const workflowList = (await workflowListResponse.json()) as {
+      workflows: WorkflowDetailResponse["workflow"][];
+    };
+    const listedWorkflow = workflowList.workflows.find(
+      (workflow) => workflow.id === workflowId
+    );
+    assert.equal(listedWorkflow?.activeVersionNo, republished.versions[0]?.versionNo);
+
     const triggerResponse = await postProtectedJson(`/workflows/${workflowId}/executions`, {
       input: {
         requestId: "integration-test"

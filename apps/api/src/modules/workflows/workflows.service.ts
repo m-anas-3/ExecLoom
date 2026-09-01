@@ -14,7 +14,10 @@ import {
   publishLatestDraftVersion
 } from "@execloom/db";
 
-type WorkflowRecord = Awaited<ReturnType<typeof listWorkflowsByOwner>>[number];
+type WorkflowListRecord = Awaited<ReturnType<typeof listWorkflowsByOwner>>[number];
+type WorkflowRecord = NonNullable<
+  Awaited<ReturnType<typeof getWorkflowDetailByOwner>>
+>["workflow"];
 type WorkflowVersionRecord = NonNullable<
   Awaited<ReturnType<typeof getWorkflowDetailByOwner>>
 >["versions"][number];
@@ -48,7 +51,7 @@ export async function createWorkflow(
   });
 
   return {
-    workflow: mapWorkflow(created.workflow),
+    workflow: mapWorkflow(created.workflow, null),
     versions: [mapWorkflowVersion(created.version)]
   };
 }
@@ -56,7 +59,7 @@ export async function createWorkflow(
 export async function listWorkflows(ownerId: string): Promise<WorkflowResponse[]> {
   const rows = await listWorkflowsByOwner(ownerId);
 
-  return rows.map(mapWorkflow);
+  return rows.map((row) => mapWorkflow(row, row.activeVersionNo));
 }
 
 export async function createWorkflowVersion(
@@ -89,7 +92,11 @@ export async function getWorkflow(
   }
 
   return {
-    workflow: mapWorkflow(detail.workflow),
+    workflow: mapWorkflow(
+      detail.workflow,
+      detail.versions.find((version) => version.id === detail.workflow.activeVersionId)
+        ?.versionNo ?? null
+    ),
     versions: detail.versions.map(mapWorkflowVersion)
   };
 }
@@ -115,7 +122,10 @@ export async function publishWorkflow(
   return getWorkflow(ownerId, workflowId);
 }
 
-function mapWorkflow(workflow: WorkflowRecord): WorkflowResponse {
+function mapWorkflow(
+  workflow: WorkflowRecord | WorkflowListRecord,
+  activeVersionNo: number | null
+): WorkflowResponse {
   return {
     id: workflow.id,
     ownerId: workflow.ownerId,
@@ -123,6 +133,7 @@ function mapWorkflow(workflow: WorkflowRecord): WorkflowResponse {
     description: workflow.description,
     status: workflow.status,
     activeVersionId: workflow.activeVersionId,
+    activeVersionNo,
     createdAt: workflow.createdAt.toISOString(),
     updatedAt: workflow.updatedAt.toISOString(),
     archivedAt: workflow.archivedAt?.toISOString() ?? null
