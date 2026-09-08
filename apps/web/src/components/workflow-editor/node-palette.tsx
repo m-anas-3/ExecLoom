@@ -1,7 +1,7 @@
 "use client";
 
 import type { WorkflowStepType } from "@execloom/contracts";
-import { Clock3, Globe2, Minus, Plus, X } from "lucide-react";
+import { Clock3, Globe2, Minus, Plus, Sparkles, X } from "lucide-react";
 import { useEffect, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,13 @@ const stepOptions = [
     description: "Call an external HTTP endpoint and store its response.",
     icon: Globe2,
     color: "border-emerald-200 bg-emerald-50 text-emerald-700"
+  },
+  {
+    type: "ai" as const,
+    label: "AI Analysis",
+    description: "Generate validated structured data with OpenAI.",
+    icon: Sparkles,
+    color: "border-rose-200 bg-rose-50 text-rose-700"
   }
 ] as const;
 

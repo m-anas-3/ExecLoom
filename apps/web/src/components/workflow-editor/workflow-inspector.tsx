@@ -262,6 +262,17 @@ function StepFields({
         />
       ) : null}
 
+      {step.type === "ai" ? (
+        <AiFields
+          credentials={credentials}
+          credentialsError={credentialsError}
+          step={step}
+          readOnly={readOnly}
+          onSchemaErrorChange={onBodyErrorChange}
+          onUpdate={updateStep}
+        />
+      ) : null}
+
       <div className="border-t border-neutral-200 pt-5">
         <p className="mb-3 text-xs font-semibold uppercase text-neutral-500">Retry policy</p>
         <div className="grid grid-cols-2 gap-3">
@@ -388,7 +399,7 @@ function HttpFields({
         <Label htmlFor="http-url">URL</Label>
         <Input
           id="http-url"
-          type="url"
+          type="text"
           value={step.config.url}
           readOnly={readOnly}
           onChange={(event) => updateConfig({ ...step.config, url: event.target.value })}
@@ -550,6 +561,210 @@ function HttpFields({
           aria-invalid={Boolean(bodyError)}
         />
         {bodyError ? <p className="text-xs text-red-600">{bodyError}</p> : null}
+      </div>
+    </>
+  );
+}
+
+type AiStep = Extract<WorkflowStepDefinition, { type: "ai" }>;
+
+function AiFields({
+  credentials,
+  credentialsError,
+  step,
+  readOnly,
+  onSchemaErrorChange,
+  onUpdate
+}: {
+  credentials: CredentialResponse[];
+  credentialsError?: string | null;
+  step: AiStep;
+  readOnly: boolean;
+  onSchemaErrorChange?: (error: string | null) => void;
+  onUpdate: (step: AiStep) => void;
+}) {
+  const bearerCredentials = credentials.filter(
+    (credential) => credential.type === "bearer_token"
+  );
+  const selectedCredentialAvailable = bearerCredentials.some(
+    ({ id }) => id === step.config.credentialId
+  );
+  const initialSchema = useMemo(
+    () => formatJson(step.config.outputSchema),
+    [step.config.outputSchema]
+  );
+  const [schemaText, setSchemaText] = useState(initialSchema);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => onSchemaErrorChange?.(null);
+  }, [onSchemaErrorChange]);
+
+  function updateConfig(config: AiStep["config"]) {
+    onUpdate({ ...step, config });
+  }
+
+  function updateSchema(value: string) {
+    setSchemaText(value);
+
+    try {
+      const parsed: unknown = JSON.parse(value);
+
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Output schema must be a JSON object.");
+      }
+
+      setSchemaError(null);
+      onSchemaErrorChange?.(null);
+      updateConfig({
+        ...step.config,
+        outputSchema: parsed as Record<string, unknown>
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message === "Output schema must be a JSON object."
+          ? error.message
+          : "Output schema must be valid JSON.";
+      setSchemaError(message);
+      onSchemaErrorChange?.(message);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid gap-2">
+        <Label htmlFor="ai-credential">OpenAI credential</Label>
+        <select
+          id="ai-credential"
+          className="h-9 rounded-md border border-neutral-300 bg-white px-3 text-sm outline-none focus:border-brand disabled:bg-neutral-100 disabled:opacity-60"
+          value={step.config.credentialId}
+          disabled={readOnly || Boolean(credentialsError)}
+          onChange={(event) =>
+            updateConfig({ ...step.config, credentialId: event.target.value })
+          }
+        >
+          <option value="">Select Bearer Token credential</option>
+          {!selectedCredentialAvailable && step.config.credentialId ? (
+            <option value={step.config.credentialId}>Unavailable credential</option>
+          ) : null}
+          {bearerCredentials.map((credential) => (
+            <option key={credential.id} value={credential.id}>
+              {credential.name}
+            </option>
+          ))}
+        </select>
+        {credentialsError ? (
+          <p className="text-xs text-red-600">Credentials could not be loaded.</p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="ai-model">Model</Label>
+        <Input
+          id="ai-model"
+          value={step.config.model}
+          maxLength={200}
+          readOnly={readOnly}
+          onChange={(event) => updateConfig({ ...step.config, model: event.target.value })}
+        />
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="ai-system-prompt">System prompt</Label>
+        <Textarea
+          id="ai-system-prompt"
+          className="min-h-28 resize-y text-sm leading-5"
+          value={step.config.systemPrompt}
+          maxLength={20_000}
+          readOnly={readOnly}
+          onChange={(event) =>
+            updateConfig({ ...step.config, systemPrompt: event.target.value })
+          }
+        />
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="ai-user-prompt">User prompt</Label>
+        <Textarea
+          id="ai-user-prompt"
+          className="min-h-36 resize-y text-sm leading-5"
+          value={step.config.userPrompt}
+          maxLength={100_000}
+          readOnly={readOnly}
+          onChange={(event) =>
+            updateConfig({ ...step.config, userPrompt: event.target.value })
+          }
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-2">
+          <Label htmlFor="ai-timeout">Timeout (ms)</Label>
+          <Input
+            id="ai-timeout"
+            type="number"
+            min={1}
+            max={240_000}
+            step={1_000}
+            value={step.config.timeoutMs}
+            readOnly={readOnly}
+            onChange={(event) =>
+              updateConfig({ ...step.config, timeoutMs: Number(event.target.value) })
+            }
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="ai-max-tokens">Max tokens</Label>
+          <Input
+            id="ai-max-tokens"
+            type="number"
+            min={1}
+            max={32_000}
+            step={100}
+            value={step.config.maxOutputTokens}
+            readOnly={readOnly}
+            onChange={(event) =>
+              updateConfig({
+                ...step.config,
+                maxOutputTokens: Number(event.target.value)
+              })
+            }
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="ai-output-schema">Output schema (JSON Schema)</Label>
+          {!readOnly ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2"
+              disabled={Boolean(schemaError)}
+              onClick={() => {
+                try {
+                  setSchemaText(formatJson(JSON.parse(schemaText)));
+                } catch {
+                  // The visible validation message remains visible.
+                }
+              }}
+            >
+              <Braces className="size-3.5" />
+              Format
+            </Button>
+          ) : null}
+        </div>
+        <Textarea
+          id="ai-output-schema"
+          className="min-h-56 resize-y font-mono text-xs leading-5"
+          value={schemaText}
+          readOnly={readOnly}
+          onChange={(event) => updateSchema(event.target.value)}
+          aria-invalid={Boolean(schemaError)}
+        />
+        {schemaError ? <p className="text-xs text-red-600">{schemaError}</p> : null}
       </div>
     </>
   );

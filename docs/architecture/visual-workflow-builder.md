@@ -66,6 +66,7 @@ sequenceDiagram
   participant Web as Next.js Builder
   participant API as Express API
   participant DB as PostgreSQL
+  participant Dispatcher as Outbox Dispatcher
   participant Queue as Redis / BullMQ
   participant Worker as Worker
 
@@ -79,11 +80,12 @@ sequenceDiagram
   API-->>Web: Active published version N
 
   Web->>API: Run input
-  API->>DB: Create execution, step runs, queued event
-  API->>Queue: Enqueue execution ID
+  API->>DB: Atomically create execution, step run, event, and outbox intent
   API-->>Web: Queued execution
+  Dispatcher->>DB: Claim pending outbox intent
+  Dispatcher->>Queue: Publish deterministic execution job
   Queue->>Worker: Dispatch job
-  Worker->>DB: Step state, outputs, errors, events
+  Worker->>DB: Step state, result, events, and next outbox intent
   loop While queued or running
     Web->>API: Poll every 3 seconds
     API->>DB: Read execution detail

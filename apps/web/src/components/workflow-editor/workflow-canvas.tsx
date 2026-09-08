@@ -210,7 +210,7 @@ function WorkflowCanvasInner({
 
       const type = event.dataTransfer.getData(workflowStepDragType) as WorkflowStepType;
 
-      if (!(["noop", "delay", "http"] as string[]).includes(type)) {
+      if (!(["noop", "delay", "http", "ai"] as string[]).includes(type)) {
         return;
       }
 
@@ -318,6 +318,10 @@ function getMiniMapNodeColor(node: Node) {
 
   if (type === "delay") {
     return "#d97706";
+  }
+
+  if (type === "ai") {
+    return "#e11d48";
   }
 
   return "#0284c7";

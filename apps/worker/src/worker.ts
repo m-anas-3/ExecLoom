@@ -19,8 +19,13 @@ import {
   publishExecutionJob,
   executionQueueName
 } from "@execloom/queue";
+import { normalizeStepExecutionResult } from "@execloom/workflow-core";
 
-import { executeWorkflowStep, type ResolvedHttpCredential } from "./executors.js";
+import {
+  executeWorkflowStep,
+  isRetryableStepExecutionError,
+  type ResolvedStepCredential
+} from "./executors.js";
 import {
   dispatchExecutionOutboxBatch,
   reconcileQueuedExecutionDispatches
@@ -60,17 +65,32 @@ const executionWorker = new BullWorker(
       return;
     }
 
-    let output: unknown;
+    let result;
 
     try {
       const credential = await resolveStepCredential(
         claim.stepDefinition,
         claim.workflowOwnerId
       );
-      output = await executeWorkflowStep({
+      result = await executeWorkflowStep({
         step: claim.stepDefinition,
         executionInput: claim.execution.inputJson,
         stepInput: claim.stepRun.inputJson ?? claim.execution.inputJson,
+        expressionContext: {
+          trigger: claim.execution.inputJson,
+          steps: Object.fromEntries(
+            Object.entries(claim.priorStepResults).map(([stepKey, stepResult]) => {
+              const normalized = normalizeStepExecutionResult(stepResult);
+              return [
+                stepKey,
+                {
+                  output: normalized.output,
+                  metadata: normalized.metadata
+                }
+              ];
+            })
+          )
+        },
         credential
       });
     } catch (error) {
@@ -78,7 +98,8 @@ const executionWorker = new BullWorker(
         executionId: claim.execution.id,
         stepRunId: claim.stepRun.id,
         errorJson: serializeError(error),
-        retryPolicy: claim.stepDefinition.retry
+        retryPolicy: claim.stepDefinition.retry,
+        retryable: isRetryableStepExecutionError(error)
       });
 
       if (failure.kind === "retry_queued") {
@@ -100,15 +121,16 @@ const executionWorker = new BullWorker(
       return;
     }
 
-    const result = await completeClaimedExecutionStep({
+    const completion = await completeClaimedExecutionStep({
       executionId: claim.execution.id,
       stepRunId: claim.stepRun.id,
-      outputJson: output
+      resultJson: result,
+      outputJson: result.output
     });
 
     console.log("Execution job processed", {
       executionId: payload.executionId,
-      result: result.kind
+      result: completion.kind
     });
   },
   {
@@ -315,13 +337,16 @@ async function reconcileOutbox() {
 async function resolveStepCredential(
   step: { type: string; config: Record<string, unknown> },
   ownerId: string
-): Promise<ResolvedHttpCredential | undefined> {
-  if (step.type !== "http" || step.config.credentialId === undefined) {
+): Promise<ResolvedStepCredential | undefined> {
+  if (
+    (step.type !== "http" && step.type !== "ai") ||
+    step.config.credentialId === undefined
+  ) {
     return undefined;
   }
 
   if (typeof step.config.credentialId !== "string") {
-    throw new Error("HTTP step credential id is invalid");
+    throw new Error("Step credential id is invalid");
   }
 
   const credential = await resolveCredentialSecretForOwner(
@@ -330,7 +355,7 @@ async function resolveStepCredential(
   );
 
   if (!credential) {
-    throw new Error("HTTP step credential is unavailable");
+    throw new Error("Step credential is unavailable");
   }
 
   return credential;

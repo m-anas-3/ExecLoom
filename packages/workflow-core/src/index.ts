@@ -75,3 +75,8 @@ export function assertStepRunTransition(from: StepRunStatus, to: StepRunStatus):
     throw new Error(`Invalid step run transition: ${from} -> ${to}`);
   }
 }
+
+export * from "./expressions.js";
+export * from "./json-schema.js";
+export * from "./results.js";
+export * from "./workflow-validation.js";

@@ -6,6 +6,7 @@ import type {
   StepRunResponse,
   WorkflowDetailResponse
 } from "@execloom/contracts";
+import { isStepExecutionResult } from "@execloom/workflow-core";
 import {
   ArrowLeft,
   Ban,
@@ -365,6 +366,8 @@ function StepTimelineItem({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const result = stepRun && isStepExecutionResult(stepRun.output) ? stepRun.output : null;
+
   return (
     <details
       open={selected}
@@ -390,9 +393,10 @@ function StepTimelineItem({
         </div>
       </summary>
       {stepRun ? (
-        <div className="grid gap-3 border-t border-neutral-200 px-4 py-4 sm:grid-cols-3">
+        <div className="grid gap-3 border-t border-neutral-200 px-4 py-4 sm:grid-cols-2 xl:grid-cols-4">
           <JsonBlock label="Input" value={stepRun.input} />
-          <JsonBlock label="Output" value={stepRun.output} />
+          <JsonBlock label="Output" value={result ? result.output : stepRun.output} />
+          <JsonBlock label="Metadata" value={result?.metadata ?? null} />
           <JsonBlock label="Error" value={stepRun.error} />
         </div>
       ) : null}

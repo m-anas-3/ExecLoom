@@ -5,12 +5,13 @@ import type {
   WorkflowResponse,
   WorkflowVersionResponse
 } from "@execloom/contracts";
+import { validateWorkflowDefinitionSemantics } from "@execloom/workflow-core";
 import {
   createDraftWorkflowVersion,
   createWorkflowWithInitialVersion,
   findUserById,
   getWorkflowDetailByOwner,
-  listCredentialIdsByOwner,
+  listCredentialRecordsByOwner,
   listWorkflowsByOwner,
   publishLatestDraftVersion
 } from "@execloom/db";
@@ -27,7 +28,8 @@ export class WorkflowServiceError extends Error {
   constructor(
     public readonly statusCode: number,
     public readonly code: string,
-    message: string
+    message: string,
+    public readonly details?: unknown
   ) {
     super(message);
   }
@@ -43,6 +45,7 @@ export async function createWorkflow(
     throw new WorkflowServiceError(404, "OWNER_NOT_FOUND", "Workflow owner was not found");
   }
 
+  validateDefinitionSemantics(input.definition);
   await validateCredentialReferences(ownerId, input.definition);
 
   const created = await createWorkflowWithInitialVersion({
@@ -70,6 +73,7 @@ export async function createWorkflowVersion(
   workflowId: string,
   input: CreateWorkflowVersionRequest
 ): Promise<WorkflowDetailResponse> {
+  validateDefinitionSemantics(input.definition);
   await validateCredentialReferences(ownerId, input.definition);
 
   const created = await createDraftWorkflowVersion({
@@ -119,6 +123,9 @@ export async function publishWorkflow(
   const draft = detail.versions.find((version) => version.status === "draft");
 
   if (draft) {
+    validateDefinitionSemantics(
+      draft.definitionJson as CreateWorkflowRequest["definition"]
+    );
     await validateCredentialReferences(
       ownerId,
       draft.definitionJson as CreateWorkflowRequest["definition"]
@@ -148,7 +155,7 @@ async function validateCredentialReferences(
 ): Promise<void> {
   const referencedIds = new Set(
     definition.steps.flatMap((step) =>
-      step.type === "http" && step.config.credentialId
+      (step.type === "http" || step.type === "ai") && step.config.credentialId
         ? [step.config.credentialId]
         : []
     )
@@ -158,14 +165,44 @@ async function validateCredentialReferences(
     return;
   }
 
-  const availableIds = new Set(await listCredentialIdsByOwner(ownerId));
-  const unavailableId = [...referencedIds].find((id) => !availableIds.has(id));
+  const credentials = await listCredentialRecordsByOwner(ownerId);
+  const availableById = new Map(credentials.map((credential) => [credential.id, credential]));
+  const unavailableId = [...referencedIds].find((id) => !availableById.has(id));
 
   if (unavailableId) {
     throw new WorkflowServiceError(
       400,
       "CREDENTIAL_UNAVAILABLE",
       "Workflow references a credential that is unavailable"
+    );
+  }
+
+  const invalidAiCredential = definition.steps.find(
+    (step) =>
+      step.type === "ai" &&
+      availableById.get(step.config.credentialId)?.type !== "bearer_token"
+  );
+
+  if (invalidAiCredential) {
+    throw new WorkflowServiceError(
+      400,
+      "AI_CREDENTIAL_TYPE_INVALID",
+      "AI steps require a Bearer Token credential"
+    );
+  }
+}
+
+function validateDefinitionSemantics(
+  definition: CreateWorkflowRequest["definition"]
+): void {
+  const issues = validateWorkflowDefinitionSemantics(definition.steps);
+
+  if (issues.length > 0) {
+    throw new WorkflowServiceError(
+      400,
+      "WORKFLOW_DEFINITION_INVALID",
+      "Workflow definition contains invalid expressions or output schemas",
+      issues
     );
   }
 }

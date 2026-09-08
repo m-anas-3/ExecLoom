@@ -10,6 +10,7 @@ flowchart LR
   Web[Web App<br/>Next.js]
   API[API Service<br/>Express]
   DB[(PostgreSQL<br/>Durable State)]
+  Dispatcher[Transactional Outbox<br/>Dispatcher]
   Redis[(Redis<br/>Queue Backend)]
   Worker[Worker Service<br/>BullMQ Consumers]
   External[External Services<br/>HTTP / AI APIs]
@@ -18,7 +19,8 @@ flowchart LR
   Web --> API
 
   API --> DB
-  API --> Redis
+  DB --> Dispatcher
+  Dispatcher --> Redis
 
   Redis --> Worker
   Worker --> DB
@@ -35,13 +37,14 @@ flowchart LR
 1. User starts a workflow from the web app.
 2. API validates the request.
 3. API creates durable execution records in PostgreSQL.
-4. API enqueues a job in Redis/BullMQ.
-5. API returns quickly to the frontend.
-6. Worker picks up the job from Redis.
-7. Worker executes workflow steps one by one.
-8. Worker saves step status, outputs, errors, and events in PostgreSQL.
-9. Frontend polls queued or running executions and stops after a terminal status.
-10. A refresh rebuilds the execution view from PostgreSQL.
+4. The same PostgreSQL transaction creates an outbox intent for the first runnable step.
+5. API returns quickly to the frontend without depending on Redis availability.
+6. The outbox dispatcher publishes the intent to BullMQ with a deterministic job ID.
+7. Worker picks up the job from Redis and claims its step in PostgreSQL.
+8. Worker executes workflow steps one by one.
+9. Each step transaction saves state and creates the next outbox intent when needed.
+10. Frontend polls queued or running executions and stops after a terminal status.
+11. A refresh rebuilds the execution view from PostgreSQL.
 
 ## Core Responsibility Split
 
@@ -50,12 +53,13 @@ flowchart LR
 | Web App | Visual authoring, publishing, execution history, and status polling |
 | API | Auth, validation, workflow versioning, and execution triggers |
 | PostgreSQL | Source of truth for users, workflows, executions, steps, and events |
+| Outbox Dispatcher | Reliable publication of PostgreSQL dispatch intents to BullMQ |
 | Redis/BullMQ | Job dispatch, delayed jobs, retries, worker coordination |
 | Worker | Long-running workflow execution, retries, step processing |
 | External Services | HTTP endpoints, AI APIs, future integrations |
 
 ## Interview Explanation
 
-The API does not execute workflows directly. It validates the request, writes durable state to PostgreSQL, enqueues work, and responds quickly.
+The API does not execute workflows or publish directly to Redis. It atomically writes durable execution state and an outbox intent to PostgreSQL, then responds quickly.
 
-The worker handles slow and failure-prone execution work outside the request lifecycle. PostgreSQL remains the source of truth, while Redis/BullMQ is only used for dispatch and retry scheduling.
+The dispatcher eventually publishes that intent to BullMQ, and deterministic job IDs make duplicate publication safe. The worker handles slow and failure-prone execution outside the request lifecycle. PostgreSQL remains the source of truth, while Redis/BullMQ is delivery infrastructure.

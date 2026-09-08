@@ -104,6 +104,50 @@ test("manages encrypted credential metadata and assigns it to an HTTP step", asy
   });
 });
 
+test("configures and saves a structured OpenAI step with workflow expressions", async ({
+  page
+}) => {
+  const mock = await installMockApi(page, { seedWorkflow: true });
+  await installAuthenticatedSession(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.goto("/credentials");
+  await page.getByRole("button", { name: "New credential" }).first().click();
+  await page.getByLabel("Type").selectOption("bearer_token");
+  await page.getByLabel("Name", { exact: true }).fill("OpenAI production key");
+  await page.getByLabel("Secret", { exact: true }).fill("browser-only-openai-secret");
+  await page.getByRole("button", { name: "Create credential" }).click();
+
+  await page.goto(`/workflows/${mock.workflowId}`);
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("button", { name: "Add AI Analysis step" }).click();
+
+  await expect(page.getByText("AI Analysis", { exact: true }).first()).toBeVisible();
+  await page.getByLabel("OpenAI credential").selectOption(mock.credentialId);
+  await page
+    .getByLabel("System prompt")
+    .fill("Return a strict customer risk score.");
+  await page
+    .getByLabel("User prompt")
+    .fill("Request succeeded: {{ steps.check-api.output.ok }}");
+  await page.getByRole("button", { name: "Save Draft" }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+  const definition = mock.state.workflowDetail?.versions[0]?.definition;
+  const aiStep = definition?.steps.find((step) => step.type === "ai");
+  expect(aiStep).toMatchObject({
+    key: "analyze",
+    type: "ai",
+    config: {
+      credentialId: mock.credentialId,
+      model: "gpt-5.6-luna",
+      systemPrompt: "Return a strict customer risk score.",
+      userPrompt: "Request succeeded: {{ steps.check-api.output.ok }}"
+    }
+  });
+  expect(JSON.stringify(definition)).not.toContain("browser-only-openai-secret");
+});
+
 test("registers, creates a template workflow, publishes, runs, and inspects it", async ({
   page
 }) => {
