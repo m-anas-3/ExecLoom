@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "next build --webpack",
-    "dev": "next dev --port 3000",
+    "dev": "next dev --webpack --port 3000",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@execloom/contracts": "workspace:*",
+    "@execloom/workflow-core": "workspace:*",
     "@xyflow/react": "^12.11.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

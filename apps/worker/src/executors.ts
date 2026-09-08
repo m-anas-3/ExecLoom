@@ -1,49 +1,137 @@
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError
+} from "openai";
+
 import { isSafeHttpStepUrl } from "@execloom/contracts";
 import type { WorkflowStepDefinitionRecord } from "@execloom/db";
+import {
+  resolveWorkflowTemplate,
+  stepExecutionResultVersion,
+  validateStructuredOutput,
+  validateStructuredOutputSchema,
+  WorkflowExpressionError,
+  type StepExecutionResult,
+  type WorkflowExpressionContext
+} from "@execloom/workflow-core";
 
 export type StepExecutionInput = {
   step: WorkflowStepDefinitionRecord;
   executionInput: unknown;
   stepInput: unknown;
-  credential?: ResolvedHttpCredential;
+  expressionContext?: WorkflowExpressionContext;
+  credential?: ResolvedStepCredential;
 };
 
-export type ResolvedHttpCredential = {
+export type ResolvedStepCredential = {
   type: "api_key" | "bearer_token";
   headerName: string | null;
   secret: string;
 };
 
-export async function executeWorkflowStep(input: StepExecutionInput): Promise<unknown> {
-  switch (input.step.type) {
-    case "noop":
-      return {
-        type: "noop",
-        completed: true,
-        input: input.stepInput
+type OpenAIResponseResult = {
+  id: string;
+  model: string;
+  status?: string;
+  output_text: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  } | null;
+};
+
+export type OpenAIResponsesClient = {
+  create: (input: {
+    model: string;
+    instructions: string;
+    input: string;
+    max_output_tokens: number;
+    store: false;
+    text: {
+      format: {
+        type: "json_schema";
+        name: string;
+        schema: Record<string, unknown>;
+        strict: true;
       };
+    };
+  }) => Promise<OpenAIResponseResult>;
+};
 
-    case "delay":
-      return executeDelayStep(input.step);
+export type StepExecutionDependencies = {
+  createOpenAIClient?: (
+    credential: ResolvedStepCredential,
+    timeoutMs: number
+  ) => OpenAIResponsesClient;
+};
 
-    case "http":
-      return executeHttpStep(input.step, input.credential);
-
-    default:
-      throw new Error(`Unsupported workflow step type: ${input.step.type}`);
+export class StepExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = "StepExecutionError";
   }
 }
 
-async function executeDelayStep(step: WorkflowStepDefinitionRecord): Promise<unknown> {
-  const ms = getDelayMs(step.config);
+export async function executeWorkflowStep(
+  input: StepExecutionInput,
+  dependencies: StepExecutionDependencies = {}
+): Promise<StepExecutionResult> {
+  const startedAt = performance.now();
 
+  try {
+    switch (input.step.type) {
+      case "noop":
+        return createResult(input.step.type, input.stepInput, startedAt);
+
+      case "delay":
+        return executeDelayStep(input, startedAt);
+
+      case "http":
+        return executeHttpStep(input, startedAt);
+
+      case "ai":
+        return executeAiStep(input, dependencies, startedAt);
+
+      default:
+        throw new StepExecutionError(
+          `Unsupported workflow step type: ${input.step.type}`,
+          "STEP_TYPE_UNSUPPORTED",
+          false
+        );
+    }
+  } catch (error) {
+    if (error instanceof StepExecutionError) {
+      throw error;
+    }
+
+    if (error instanceof WorkflowExpressionError) {
+      throw new StepExecutionError(error.message, "EXPRESSION_RESOLUTION_FAILED", false);
+    }
+
+    throw error;
+  }
+}
+
+export function isRetryableStepExecutionError(error: unknown): boolean {
+  return error instanceof StepExecutionError && error.retryable;
+}
+
+async function executeDelayStep(
+  input: StepExecutionInput,
+  startedAt: number
+): Promise<StepExecutionResult> {
+  const ms = getDelayMs(input.step.config);
   await sleep(ms);
 
-  return {
-    type: "delay",
-    completed: true,
+  return createResult(input.step.type, input.stepInput, startedAt, {
     delayedForMs: ms
-  };
+  });
 }
 
 function getDelayMs(config: Record<string, unknown>): number {
@@ -54,17 +142,25 @@ function getDelayMs(config: Record<string, unknown>): number {
   }
 
   if (typeof rawMs !== "number" || !Number.isInteger(rawMs) || rawMs < 0 || rawMs > 30_000) {
-    throw new Error("Delay step config.ms must be an integer between 0 and 30000");
+    throw new StepExecutionError(
+      "Delay step config.ms must be an integer between 0 and 30000",
+      "DELAY_CONFIG_INVALID",
+      false
+    );
   }
 
   return rawMs;
 }
 
 async function executeHttpStep(
-  step: WorkflowStepDefinitionRecord,
-  credential?: ResolvedHttpCredential
-): Promise<unknown> {
-  const config = getHttpConfig(step.config, credential);
+  input: StepExecutionInput,
+  startedAt: number
+): Promise<StepExecutionResult> {
+  const config = getHttpConfig(
+    input.step.config,
+    getExpressionContext(input),
+    input.credential
+  );
   const abortController = new AbortController();
   const timeout = setTimeout(() => {
     abortController.abort();
@@ -79,12 +175,20 @@ async function executeHttpStep(
       body: config.body === undefined ? undefined : JSON.stringify(config.body),
       signal: abortController.signal
     });
-  } catch (error) {
+  } catch {
     if (abortController.signal.aborted) {
-      throw new Error(`HTTP step timed out after ${config.timeoutMs}ms`);
+      throw new StepExecutionError(
+        `HTTP step timed out after ${config.timeoutMs}ms`,
+        "HTTP_TIMEOUT",
+        true
+      );
     }
 
-    throw error;
+    throw new StepExecutionError(
+      "HTTP step could not reach the remote service",
+      "HTTP_CONNECTION_FAILED",
+      true
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -92,42 +196,51 @@ async function executeHttpStep(
   const responseBody = await readResponseBody(response);
 
   if (!response.ok) {
-    throw new Error(`HTTP step failed with status ${response.status}`);
+    throw new StepExecutionError(
+      `HTTP step failed with status ${response.status}`,
+      "HTTP_RESPONSE_FAILED",
+      isTransientHttpStatus(response.status)
+    );
   }
 
-  return {
-    type: "http",
-    completed: true,
+  return createResult(input.step.type, responseBody, startedAt, {
     status: response.status,
-    headers: Object.fromEntries(response.headers.entries()),
-    body: responseBody
-  };
+    headers: Object.fromEntries(response.headers.entries())
+  });
 }
 
 function getHttpConfig(
   config: Record<string, unknown>,
-  credential?: ResolvedHttpCredential
+  context: WorkflowExpressionContext,
+  credential?: ResolvedStepCredential
 ) {
-  const url = config.url;
+  const url = resolveWorkflowTemplate(config.url, context);
   const method = config.method ?? "GET";
-  const headers = config.headers ?? {};
+  const headers = resolveHttpHeaders(config.headers ?? {}, context);
+  const body = resolveWorkflowTemplate(config.body, context);
 
   if (typeof url !== "string" || url.length === 0) {
-    throw new Error("HTTP step config.url must be a non-empty string");
+    throw new StepExecutionError(
+      "HTTP step URL must resolve to a non-empty string",
+      "HTTP_URL_INVALID",
+      false
+    );
   }
 
   if (!isSafeHttpStepUrl(url)) {
-    throw new Error(
-      "HTTP step config.url must use http or https and cannot target local or private network hosts"
+    throw new StepExecutionError(
+      "HTTP step URL must resolve to an http or https URL outside local and private networks",
+      "HTTP_URL_UNSAFE",
+      false
     );
   }
 
   if (typeof method !== "string" || !["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    throw new Error("HTTP step config.method must be one of GET, POST, PUT, PATCH, DELETE");
-  }
-
-  if (!isStringRecord(headers)) {
-    throw new Error("HTTP step config.headers must be an object with string values");
+    throw new StepExecutionError(
+      "HTTP step method is invalid",
+      "HTTP_METHOD_INVALID",
+      false
+    );
   }
 
   const requestHeaders = new Headers({
@@ -140,7 +253,11 @@ function getHttpConfig(
 
   if (credential?.type === "api_key") {
     if (!credential.headerName) {
-      throw new Error("API key credential does not have a header name");
+      throw new StepExecutionError(
+        "API key credential does not have a header name",
+        "HTTP_CREDENTIAL_INVALID",
+        false
+      );
     }
 
     requestHeaders.set(credential.headerName, credential.secret);
@@ -152,37 +269,278 @@ function getHttpConfig(
     url,
     method,
     headers: Object.fromEntries(requestHeaders.entries()),
-    body: config.body,
-    timeoutMs: getHttpTimeoutMs(config)
+    body,
+    timeoutMs: getIntegerConfig(config.timeoutMs, 10_000, 1, 60_000, "HTTP timeout")
   };
 }
 
-function getHttpTimeoutMs(config: Record<string, unknown>): number {
-  const rawTimeoutMs = config.timeoutMs;
-
-  if (rawTimeoutMs === undefined) {
-    return 10_000;
+function resolveHttpHeaders(
+  headers: unknown,
+  context: WorkflowExpressionContext
+): Record<string, string> {
+  if (!isPlainObject(headers)) {
+    throw new StepExecutionError(
+      "HTTP step headers must be an object",
+      "HTTP_HEADERS_INVALID",
+      false
+    );
   }
 
-  if (
-    typeof rawTimeoutMs !== "number" ||
-    !Number.isInteger(rawTimeoutMs) ||
-    rawTimeoutMs < 1 ||
-    rawTimeoutMs > 60_000
-  ) {
-    throw new Error("HTTP step config.timeoutMs must be an integer between 1 and 60000");
-  }
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => {
+      const resolved = resolveWorkflowTemplate(value, context);
 
-  return rawTimeoutMs;
+      if (
+        typeof resolved !== "string" &&
+        typeof resolved !== "number" &&
+        typeof resolved !== "boolean"
+      ) {
+        throw new StepExecutionError(
+          `HTTP header "${name}" must resolve to a string, number, or boolean`,
+          "HTTP_HEADERS_INVALID",
+          false
+        );
+      }
+
+      return [name, String(resolved)];
+    })
+  );
 }
 
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
+async function executeAiStep(
+  input: StepExecutionInput,
+  dependencies: StepExecutionDependencies,
+  startedAt: number
+): Promise<StepExecutionResult> {
+  const config = getAiConfig(input.step, getExpressionContext(input));
+
+  if (!input.credential || input.credential.type !== "bearer_token") {
+    throw new StepExecutionError(
+      "AI step requires an available Bearer Token credential",
+      "AI_CREDENTIAL_INVALID",
+      false
+    );
+  }
+
+  const schemaResult = validateStructuredOutputSchema(config.outputSchema);
+
+  if (!schemaResult.valid) {
+    throw new StepExecutionError(
+      `AI output schema is invalid: ${schemaResult.errors.join("; ")}`,
+      "AI_OUTPUT_SCHEMA_INVALID",
+      false
+    );
+  }
+
+  const client = (dependencies.createOpenAIClient ?? createOpenAIClient)(
+    input.credential,
+    config.timeoutMs
   );
+  let response: OpenAIResponseResult;
+
+  try {
+    response = await client.create({
+      model: config.model,
+      instructions: config.systemPrompt,
+      input: config.userPrompt,
+      max_output_tokens: config.maxOutputTokens,
+      store: false,
+      text: {
+        format: {
+          type: "json_schema",
+          name: createOutputSchemaName(input.step.key),
+          schema: config.outputSchema,
+          strict: true
+        }
+      }
+    });
+  } catch (error) {
+    throw toOpenAIExecutionError(error);
+  }
+
+  if (response.status && response.status !== "completed") {
+    throw new StepExecutionError(
+      `OpenAI response ended with status ${response.status}`,
+      "AI_RESPONSE_INCOMPLETE",
+      false
+    );
+  }
+
+  let output: unknown;
+
+  try {
+    output = JSON.parse(response.output_text);
+  } catch {
+    throw new StepExecutionError(
+      "OpenAI response did not contain valid structured JSON",
+      "AI_OUTPUT_INVALID",
+      false
+    );
+  }
+
+  const outputValidation = validateStructuredOutput(config.outputSchema, output);
+
+  if (!outputValidation.valid) {
+    throw new StepExecutionError(
+      `OpenAI response failed output validation: ${outputValidation.errors.join("; ")}`,
+      "AI_OUTPUT_INVALID",
+      false
+    );
+  }
+
+  return createResult(input.step.type, output, startedAt, {
+    provider: "openai",
+    responseId: response.id,
+    model: response.model,
+    inputTokens: response.usage?.input_tokens ?? null,
+    outputTokens: response.usage?.output_tokens ?? null,
+    totalTokens: response.usage?.total_tokens ?? null
+  });
+}
+
+function getAiConfig(
+  step: WorkflowStepDefinitionRecord,
+  context: WorkflowExpressionContext
+) {
+  const model = step.config.model;
+  const systemPrompt = resolveWorkflowTemplate(step.config.systemPrompt ?? "", context);
+  const userPrompt = resolveWorkflowTemplate(step.config.userPrompt, context);
+  const outputSchema = step.config.outputSchema;
+
+  if (typeof model !== "string" || model.trim().length === 0 || model.length > 200) {
+    throw new StepExecutionError("AI step model is invalid", "AI_CONFIG_INVALID", false);
+  }
+
+  if (typeof systemPrompt !== "string" || typeof userPrompt !== "string" || !userPrompt) {
+    throw new StepExecutionError(
+      "AI prompts must resolve to strings and the user prompt cannot be empty",
+      "AI_PROMPT_INVALID",
+      false
+    );
+  }
+
+  if (!isPlainObject(outputSchema)) {
+    throw new StepExecutionError(
+      "AI output schema must be an object",
+      "AI_OUTPUT_SCHEMA_INVALID",
+      false
+    );
+  }
+
+  return {
+    model: model.trim(),
+    systemPrompt,
+    userPrompt,
+    outputSchema,
+    timeoutMs: getIntegerConfig(step.config.timeoutMs, 60_000, 1, 240_000, "AI timeout"),
+    maxOutputTokens: getIntegerConfig(
+      step.config.maxOutputTokens,
+      2_000,
+      1,
+      32_000,
+      "AI max output tokens"
+    )
+  };
+}
+
+function createOpenAIClient(
+  credential: ResolvedStepCredential,
+  timeoutMs: number
+): OpenAIResponsesClient {
+  const client = new OpenAI({
+    apiKey: credential.secret,
+    maxRetries: 0,
+    timeout: timeoutMs
+  });
+
+  return client.responses;
+}
+
+function toOpenAIExecutionError(error: unknown): StepExecutionError {
+  if (error instanceof APIConnectionTimeoutError) {
+    return new StepExecutionError("OpenAI request timed out", "AI_TIMEOUT", true);
+  }
+
+  if (error instanceof APIConnectionError) {
+    return new StepExecutionError(
+      "OpenAI could not be reached",
+      "AI_CONNECTION_FAILED",
+      true
+    );
+  }
+
+  if (error instanceof APIError) {
+    const status = error.status;
+    return new StepExecutionError(
+      status ? `OpenAI request failed with status ${status}` : "OpenAI request failed",
+      "AI_REQUEST_FAILED",
+      status === 408 || status === 409 || status === 429 || (status !== undefined && status >= 500)
+    );
+  }
+
+  return new StepExecutionError("OpenAI request failed", "AI_REQUEST_FAILED", false);
+}
+
+function createResult(
+  stepType: string,
+  output: unknown,
+  startedAt: number,
+  metadata: Record<string, unknown> = {}
+): StepExecutionResult {
+  return {
+    output,
+    metadata: {
+      resultVersion: stepExecutionResultVersion,
+      stepType,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      ...metadata
+    }
+  };
+}
+
+function getExpressionContext(input: StepExecutionInput): WorkflowExpressionContext {
+  return input.expressionContext ?? {
+    trigger: input.executionInput,
+    steps: {}
+  };
+}
+
+function createOutputSchemaName(stepKey: string): string {
+  const normalized = stepKey.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48);
+  return `${normalized || "ai_step"}_output`;
+}
+
+function getIntegerConfig(
+  value: unknown,
+  defaultValue: number,
+  minimum: number,
+  maximum: number,
+  label: string
+): number {
+  const resolved = value ?? defaultValue;
+
+  if (
+    typeof resolved !== "number" ||
+    !Number.isInteger(resolved) ||
+    resolved < minimum ||
+    resolved > maximum
+  ) {
+    throw new StepExecutionError(
+      `${label} must be an integer between ${minimum} and ${maximum}`,
+      "STEP_CONFIG_INVALID",
+      false
+    );
+  }
+
+  return resolved;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {

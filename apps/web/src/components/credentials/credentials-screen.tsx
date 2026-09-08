@@ -138,7 +138,7 @@ export function CredentialsScreen() {
             <EmptyState
               icon={KeyRound}
               title="No credentials"
-              description="Create an API key or Bearer token before connecting an authenticated HTTP step."
+              description="Create an API key or Bearer token before connecting an authenticated HTTP or OpenAI step."
               action={<Button variant="accent" onClick={openCreateDialog}><Plus className="size-4" />New credential</Button>}
             />
           </div>

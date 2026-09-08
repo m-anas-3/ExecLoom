@@ -233,7 +233,8 @@ export function createWorkflowStep(
   const baseKeyByType: Record<WorkflowStepType, string> = {
     noop: "step",
     delay: "delay",
-    http: "http-request"
+    http: "http-request",
+    ai: "analyze"
   };
   const existing = new Set(existingKeys);
   const baseKey = baseKeyByType[type];
@@ -261,6 +262,31 @@ export function createWorkflowStep(
         method: "GET",
         headers: {},
         timeoutMs: 10_000
+      },
+      retry
+    };
+  }
+
+  if (type === "ai") {
+    return {
+      key,
+      name: "AI Analysis",
+      type,
+      config: {
+        credentialId: "",
+        model: "gpt-5.6-luna",
+        systemPrompt: "",
+        userPrompt: "",
+        outputSchema: {
+          type: "object",
+          properties: {
+            result: { type: "string" }
+          },
+          required: ["result"],
+          additionalProperties: false
+        },
+        timeoutMs: 60_000,
+        maxOutputTokens: 2_000
       },
       retry
     };

@@ -231,7 +231,8 @@ function formatStepType(type: WorkflowVersionResponse["definition"]["steps"][num
   const labels = {
     noop: "No-op",
     delay: "Delay",
-    http: "HTTP Request"
+    http: "HTTP Request",
+    ai: "AI Analysis"
   } as const;
 
   return labels[type];

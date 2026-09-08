@@ -160,6 +160,7 @@ describe("workflow step types", () => {
     assert.equal(workflowStepTypeSchema.parse("noop"), "noop");
     assert.equal(workflowStepTypeSchema.parse("delay"), "delay");
     assert.equal(workflowStepTypeSchema.parse("http"), "http");
+    assert.equal(workflowStepTypeSchema.parse("ai"), "ai");
   });
 
   it("rejects unsupported step types", () => {
@@ -305,6 +306,73 @@ describe("workflow definition contracts", () => {
     });
 
     assert.equal(parsed.steps[0]?.config.timeoutMs, 5_000);
+  });
+
+  it("accepts expression templates in http URLs, headers, and bodies", () => {
+    const parsed = workflowDefinitionSchema.parse({
+      steps: [
+        {
+          key: "notify",
+          type: "http",
+          config: {
+            url: "https://api.example.com/customers/{{ trigger.customerId }}",
+            headers: {
+              "x-request-id": "{{ trigger.requestId }}"
+            },
+            body: {
+              score: "{{ steps.analyze.output.score }}"
+            }
+          }
+        }
+      ]
+    });
+
+    assert.equal(
+      parsed.steps[0]?.config.url,
+      "https://api.example.com/customers/{{ trigger.customerId }}"
+    );
+  });
+
+  it("accepts structured AI steps and applies runtime defaults", () => {
+    const credentialId = "00000000-0000-4000-8000-000000000001";
+    const parsed = workflowDefinitionSchema.parse({
+      steps: [
+        {
+          key: "analyze",
+          type: "ai",
+          config: {
+            credentialId,
+            model: "gpt-5.6-luna",
+            userPrompt: "Analyze {{ trigger.customerId }}",
+            outputSchema: {
+              type: "object",
+              properties: {
+                score: { type: "number" }
+              },
+              required: ["score"],
+              additionalProperties: false
+            }
+          }
+        }
+      ]
+    });
+
+    assert.deepEqual(parsed.steps[0]?.config, {
+      credentialId,
+      model: "gpt-5.6-luna",
+      systemPrompt: "",
+      userPrompt: "Analyze {{ trigger.customerId }}",
+      outputSchema: {
+        type: "object",
+        properties: {
+          score: { type: "number" }
+        },
+        required: ["score"],
+        additionalProperties: false
+      },
+      timeoutMs: 60_000,
+      maxOutputTokens: 2_000
+    });
   });
 
   it("rejects http steps with empty header names", () => {

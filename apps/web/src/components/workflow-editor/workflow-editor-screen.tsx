@@ -8,6 +8,7 @@ import {
   type WorkflowStepType,
   type WorkflowVersionResponse
 } from "@execloom/contracts";
+import { validateWorkflowDefinitionSemantics } from "@execloom/workflow-core";
 import {
   AlertCircle,
   Check,
@@ -197,6 +198,13 @@ export function WorkflowEditorScreen({
         : { success: false as const, error: null },
     [compiled.definition]
   );
+  const semanticIssues = useMemo(
+    () =>
+      definitionResult.success
+        ? validateWorkflowDefinitionSemantics(definitionResult.data.steps)
+        : [],
+    [definitionResult]
+  );
   const currentFingerprint = useMemo(
     () => createFingerprint(graph, inputSchemaText),
     [graph, inputSchemaText]
@@ -225,8 +233,10 @@ export function WorkflowEditorScreen({
       );
     }
 
+    messages.push(...semanticIssues.map((issue) => issue.message));
+
     return [...new Set(messages)];
-  }, [bodyEditorError, compiled.issues, connectionIssues, definitionResult, inputSchemaResult.error]);
+  }, [bodyEditorError, compiled.issues, connectionIssues, definitionResult, inputSchemaResult.error, semanticIssues]);
   const isValid = validationMessages.length === 0 && Boolean(compiled.definition);
   const loadedVersion = workflowDetail?.versions.find((version) => version.id === loadedVersionId) ?? null;
   const activeVersion =
@@ -267,8 +277,16 @@ export function WorkflowEditorScreen({
       addIssue(selectedNodeId, bodyEditorError);
     }
 
+    if (compiled.definition) {
+      for (const issue of semanticIssues) {
+        const match = /^steps\[(\d+)]/.exec(issue.path);
+        const step = match ? compiled.definition.steps[Number(match[1])] : undefined;
+        addIssue(step?.key, issue.message);
+      }
+    }
+
     return issues;
-  }, [bodyEditorError, compiled.definition, compiled.issues, connectionIssues, definitionResult, selectedNodeId]);
+  }, [bodyEditorError, compiled.definition, compiled.issues, connectionIssues, definitionResult, selectedNodeId, semanticIssues]);
   const selectedIssues = selectedNodeId ? nodeIssues.get(selectedNodeId) ?? [] : [];
 
   useUnsavedChangesWarning(isDirty);

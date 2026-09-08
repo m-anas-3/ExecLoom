@@ -7,15 +7,16 @@ ExecLoom stores reusable API-key and Bearer-token credentials separately from im
 1. The web app sends a credential secret to the authenticated API.
 2. The API encrypts it with AES-256-GCM using a unique 12-byte IV and authenticated row context.
 3. PostgreSQL stores ciphertext, IV, and authentication tag. API responses expose metadata only.
-4. A workflow version stores only the credential UUID in its HTTP step configuration.
+4. A workflow version stores only the credential UUID in its HTTP or AI step configuration.
 5. BullMQ continues to carry execution and workflow-version identifiers only.
-6. The worker verifies credential ownership, decrypts the secret in memory, injects the HTTP header, and discards the plaintext after the request.
+6. The worker verifies credential ownership, decrypts the secret in memory, injects it into the HTTP or OpenAI client, and discards the plaintext after the request.
 
 ## Security Boundaries
 
 - `CREDENTIAL_ENCRYPTION_KEY` is separate from the JWT signing secret and must be explicitly configured in production.
 - Secrets are excluded from workflow JSON, queue jobs, step inputs, outputs, events, API responses, and logs.
 - API-key credentials inject their configured header. Bearer credentials inject `Authorization: Bearer ...`.
+- OpenAI steps accept Bearer-token credentials only.
 - Credential headers override manual headers case-insensitively.
 - A credential used by an active published workflow cannot be archived.
 - Draft creation and publishing reject unavailable or cross-owner credential references.

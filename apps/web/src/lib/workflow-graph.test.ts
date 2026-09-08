@@ -72,6 +72,36 @@ describe("workflow graph conversion", () => {
     expect(compileWorkflowGraph(graph).definition?.steps.at(-1)?.key).toBe("delay");
   });
 
+  it("creates a structured AI step that requires credential selection", () => {
+    const step = createWorkflowStep("ai", []);
+
+    if (step.type !== "ai") {
+      throw new Error("Expected createWorkflowStep to return an AI step");
+    }
+
+    expect(step).toMatchObject({
+      key: "analyze",
+      name: "AI Analysis",
+      type: "ai",
+      config: {
+        credentialId: "",
+        model: "gpt-5.6-luna",
+        systemPrompt: "",
+        userPrompt: "",
+        timeoutMs: 60_000,
+        maxOutputTokens: 2_000
+      }
+    });
+    expect(step.config.outputSchema).toEqual({
+      type: "object",
+      properties: {
+        result: { type: "string" }
+      },
+      required: ["result"],
+      additionalProperties: false
+    });
+  });
+
   it("reconnects neighboring steps when deleting a middle node", () => {
     let graph = definitionToWorkflowGraph(definition);
     graph = appendStepToGraph(graph, createWorkflowStep("noop", graph.nodes.map((node) => node.id)));

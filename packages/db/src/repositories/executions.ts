@@ -595,11 +595,27 @@ export async function claimQueuedExecutionStep(executionId: string) {
 
       await tx.insert(executionEvents).values(eventValues);
 
+      const priorStepResults = await tx
+        .select({
+          stepKey: stepRuns.stepKey,
+          outputJson: stepRuns.outputJson
+        })
+        .from(stepRuns)
+        .where(
+          and(
+            eq(stepRuns.executionId, execution.id),
+            eq(stepRuns.status, "succeeded")
+          )
+        );
+
       return {
         kind: "claimed" as const,
         execution: runningExecution,
         stepRun: runningStep,
         stepDefinition,
+        priorStepResults: Object.fromEntries(
+          priorStepResults.map(({ stepKey, outputJson }) => [stepKey, outputJson])
+        ),
         workflowOwnerId: version.ownerId
       };
     });
@@ -609,6 +625,7 @@ export async function claimQueuedExecutionStep(executionId: string) {
 export async function completeClaimedExecutionStep(input: {
   executionId: string;
   stepRunId: string;
+  resultJson?: unknown;
   outputJson: unknown;
 }) {
   return withDatabase(async ({ db }) => {
@@ -665,7 +682,7 @@ export async function completeClaimedExecutionStep(input: {
         .update(stepRuns)
         .set({
           status: "succeeded",
-          outputJson: input.outputJson,
+          outputJson: input.resultJson === undefined ? input.outputJson : input.resultJson,
           errorJson: null,
           endedAt: completedAt
         })
@@ -741,10 +758,7 @@ export async function completeClaimedExecutionStep(input: {
         .update(executions)
         .set({
           status: "succeeded",
-          outputJson: {
-            completed: true,
-            completedStepKey: completedStep.stepKey
-          },
+          outputJson: input.outputJson,
           endedAt: completedAt
         })
         .where(and(eq(executions.id, execution.id), eq(executions.status, "running")))
@@ -791,6 +805,7 @@ export async function failOrRetryClaimedExecutionStep(input: {
   stepRunId: string;
   errorJson: unknown;
   retryPolicy: WorkflowStepRetryPolicyRecord;
+  retryable?: boolean;
 }) {
   return withDatabase(async ({ db }) => {
     return db.transaction(async (tx) => {
@@ -823,7 +838,7 @@ export async function failOrRetryClaimedExecutionStep(input: {
         return { kind: "step_not_failable" as const, status: stepRun.status };
       }
 
-      if (stepRun.attemptCount < input.retryPolicy.maxAttempts) {
+      if (input.retryable !== false && stepRun.attemptCount < input.retryPolicy.maxAttempts) {
         assertStepRunTransition(stepRun.status, "retrying");
         assertStepRunTransition("retrying", "queued");
 

@@ -483,6 +483,103 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     assert.equal(afterArchive.credentials.some(({ id }) => id === credential.id), false);
   });
 
+  it("validates expression ordering and AI credential types before persistence", async () => {
+    const bearerResponse = await postProtectedJson("/credentials", {
+      type: "bearer_token",
+      name: "OpenAI integration credential",
+      secret: "openai-integration-secret"
+    });
+    const apiKeyResponse = await postProtectedJson("/credentials", {
+      type: "api_key",
+      name: "Non-OpenAI integration credential",
+      secret: "api-key-integration-secret"
+    });
+
+    assert.equal(bearerResponse.status, 201);
+    assert.equal(apiKeyResponse.status, 201);
+
+    const bearerCredential = (await bearerResponse.json()) as CredentialResponse;
+    const apiKeyCredential = (await apiKeyResponse.json()) as CredentialResponse;
+    const invalidReferenceResponse = await postProtectedJson("/workflows", {
+      name: "Invalid expression workflow",
+      definition: {
+        steps: [
+          {
+            key: "notify",
+            type: "http",
+            config: {
+              url: "https://example.com/{{ steps.future.output.id }}"
+            }
+          },
+          {
+            key: "future",
+            type: "noop",
+            config: {}
+          }
+        ]
+      }
+    });
+
+    assert.equal(invalidReferenceResponse.status, 400);
+    const invalidReferenceBody = (await invalidReferenceResponse.json()) as {
+      code: string;
+      details: Array<{ path: string; message: string }>;
+    };
+    assert.equal(invalidReferenceBody.code, "WORKFLOW_DEFINITION_INVALID");
+    assert.equal(invalidReferenceBody.details[0]?.path, "steps[0].config.url");
+
+    const invalidCredentialResponse = await postProtectedJson("/workflows", {
+      name: "Invalid AI credential workflow",
+      definition: {
+        steps: [
+          {
+            key: "analyze",
+            type: "ai",
+            config: {
+              credentialId: apiKeyCredential.id,
+              model: "gpt-5.6-luna",
+              userPrompt: "Analyze the trigger",
+              outputSchema: createScoreOutputSchema()
+            }
+          }
+        ]
+      }
+    });
+
+    assert.equal(invalidCredentialResponse.status, 400);
+    assert.equal(
+      ((await invalidCredentialResponse.json()) as { code: string }).code,
+      "AI_CREDENTIAL_TYPE_INVALID"
+    );
+
+    const validWorkflowResponse = await postProtectedJson("/workflows", {
+      name: "Expression and AI integration workflow",
+      definition: {
+        steps: [
+          {
+            key: "fetch",
+            type: "http",
+            config: {
+              url: "https://example.com/customers/{{ trigger.customerId }}"
+            }
+          },
+          {
+            key: "analyze",
+            type: "ai",
+            config: {
+              credentialId: bearerCredential.id,
+              model: "gpt-5.6-luna",
+              userPrompt: "Analyze {{ steps.fetch.output }}",
+              outputSchema: createScoreOutputSchema()
+            }
+          }
+        ]
+      }
+    });
+
+    assert.equal(validWorkflowResponse.status, 201);
+  });
+
   async function postPublicJson(path: string, body?: unknown) {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",
@@ -532,3 +629,14 @@ describe("api integration", { skip: !runIntegrationTests }, () => {
     });
   }
 });
+
+function createScoreOutputSchema() {
+  return {
+    type: "object",
+    properties: {
+      score: { type: "number" }
+    },
+    required: ["score"],
+    additionalProperties: false
+  };
+}

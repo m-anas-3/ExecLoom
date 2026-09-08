@@ -34,7 +34,7 @@ Waits for the configured number of milliseconds. Defaults to `1000`.
 
 ### http
 
-Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and `timeoutMs` are optional.
+Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and `timeoutMs` are optional. URL, header values, and body values can use workflow expressions.
 
 ```json
 {
@@ -44,10 +44,10 @@ Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and 
     "url": "https://example.com/webhook",
     "method": "POST",
     "headers": {
-      "authorization": "Bearer local-dev-token"
+      "x-customer-id": "{{ trigger.customerId }}"
     },
     "body": {
-      "event": "execution.completed"
+      "email": "{{ steps.fetch-customer.output.email }}"
     },
     "timeoutMs": 10000
   }
@@ -56,6 +56,35 @@ Calls an external HTTP API. `url` is required. `method`, `headers`, `body`, and 
 
 HTTP steps fail when the response is not `2xx` or the request exceeds `timeoutMs`.
 Localhost and private network URLs are rejected to reduce SSRF risk from user-defined workflows.
+
+### ai
+
+Calls the OpenAI Responses API with a selected Bearer-token credential and requires structured JSON output. Prompts support workflow expressions. The worker validates the JSON Schema before the request and validates the returned value again before completing the step.
+
+```json
+{
+  "key": "analyze",
+  "type": "ai",
+  "config": {
+    "credentialId": "00000000-0000-4000-8000-000000000001",
+    "model": "gpt-5.6-luna",
+    "systemPrompt": "Score the customer record.",
+    "userPrompt": "Customer email: {{ steps.fetch-customer.output.email }}",
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "score": { "type": "number" }
+      },
+      "required": ["score"],
+      "additionalProperties": false
+    },
+    "timeoutMs": 60000,
+    "maxOutputTokens": 2000
+  }
+}
+```
+
+Provider response IDs, model IDs, token counts, and duration are stored as step metadata. Credential secrets and prompts are not copied into result metadata.
 
 ## Step Retries
 

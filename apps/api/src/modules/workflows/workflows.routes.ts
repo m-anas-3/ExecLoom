@@ -134,7 +134,8 @@ function handleWorkflowError(
   if (error instanceof WorkflowServiceError) {
     res.status(error.statusCode).json({
       code: error.code,
-      message: error.message
+      message: error.message,
+      ...(error.details === undefined ? {} : { details: error.details })
     });
     return;
   }

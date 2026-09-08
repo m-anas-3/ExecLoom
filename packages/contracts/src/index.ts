@@ -8,7 +8,7 @@ declare const URL: {
 };
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
-export const workflowStepTypeSchema = z.enum(["noop", "delay", "http"]);
+export const workflowStepTypeSchema = z.enum(["noop", "delay", "http", "ai"]);
 export const httpStepMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const privateHttpStepUrlMessage =
   "URL must use http or https and cannot target local or private network hosts";
@@ -40,13 +40,27 @@ export const delayStepConfigSchema = z
 export const httpStepConfigSchema = z.object({
   url: z
     .string()
-    .url()
-    .refine(isSafeHttpStepUrl, privateHttpStepUrlMessage),
+    .min(1)
+    .max(8_192)
+    .refine(
+      (value) => value.includes("{{") || isSafeHttpStepUrl(value),
+      privateHttpStepUrlMessage
+    ),
   method: httpStepMethodSchema.default("GET"),
   headers: z.record(z.string().min(1), z.string()).default({}),
   credentialId: z.string().uuid().optional(),
   body: z.unknown().optional(),
   timeoutMs: z.number().int().min(1).max(60_000).default(10_000)
+});
+
+export const aiStepConfigSchema = z.object({
+  credentialId: z.string().uuid(),
+  model: z.string().trim().min(1).max(200),
+  systemPrompt: z.string().max(20_000).default(""),
+  userPrompt: z.string().min(1).max(100_000),
+  outputSchema: jsonObjectSchema,
+  timeoutMs: z.number().int().min(1).max(240_000).default(60_000),
+  maxOutputTokens: z.number().int().min(1).max(32_000).default(2_000)
 });
 
 export const healthResponseSchema = z.object({
@@ -145,6 +159,10 @@ export const workflowStepDefinitionSchema = z.discriminatedUnion("type", [
   workflowStepBaseSchema.extend({
     type: z.literal("http"),
     config: httpStepConfigSchema
+  }),
+  workflowStepBaseSchema.extend({
+    type: z.literal("ai"),
+    config: aiStepConfigSchema
   })
 ]);
 

@@ -6,6 +6,14 @@ const nextConfig: NextConfig = {
   agentRules: false,
   devIndicators: false,
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  webpack(config) {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"]
+    };
+
+    return config;
+  },
   async rewrites() {
     return [
       {

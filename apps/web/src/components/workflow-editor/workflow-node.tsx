@@ -1,7 +1,7 @@
 "use client";
 
 import type { StepRunResponse, WorkflowStepDefinition } from "@execloom/contracts";
-import { AlertCircle, Clock3, Globe2, Minus, Play } from "lucide-react";
+import { AlertCircle, Clock3, Globe2, Minus, Play, Sparkles } from "lucide-react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
 import { getStatusPresentation } from "@/lib/status-presentation";
@@ -19,7 +19,8 @@ export type StartFlowNode = Node<Record<string, never>, "workflowStart">;
 const typeStyle = {
   noop: { icon: Minus, iconClassName: "border-sky-200 bg-sky-50 text-sky-700", label: "No-op" },
   delay: { icon: Clock3, iconClassName: "border-amber-200 bg-amber-50 text-amber-700", label: "Delay" },
-  http: { icon: Globe2, iconClassName: "border-emerald-200 bg-emerald-50 text-emerald-700", label: "HTTP Request" }
+  http: { icon: Globe2, iconClassName: "border-emerald-200 bg-emerald-50 text-emerald-700", label: "HTTP Request" },
+  ai: { icon: Sparkles, iconClassName: "border-rose-200 bg-rose-50 text-rose-700", label: "AI Analysis" }
 } as const;
 
 export function WorkflowStepNode({ data, selected, dragging }: NodeProps<WorkflowStepFlowNode>) {

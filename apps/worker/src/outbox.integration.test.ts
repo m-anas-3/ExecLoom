@@ -243,6 +243,110 @@ describe("reliable execution dispatch", { skip: !runIntegrationTests, concurrenc
     assert.equal(completed.execution.status, "succeeded");
   });
 
+  it("persists result envelopes while passing business output between steps", async () => {
+    const seeded = await seedWorkflow(database, users, ["first", "second"]);
+    const triggered = await triggerExecutionForWorkflow({
+      ownerId: seeded.userId,
+      workflowId: seeded.workflowId,
+      inputJson: { customerId: "cus_123" }
+    });
+    assert.equal(triggered.kind, "created");
+
+    await dispatchWithNoopPublisher(triggered.execution.id);
+    const firstClaim = await claimQueuedExecutionStep(triggered.execution.id);
+    assert.equal(firstClaim.kind, "claimed");
+    const firstOutput = { email: "customer@example.com" };
+    const firstResult = {
+      output: firstOutput,
+      metadata: {
+        resultVersion: 1,
+        stepType: "http",
+        durationMs: 25,
+        status: 200
+      }
+    };
+    const firstCompletion = await completeClaimedExecutionStep({
+      executionId: firstClaim.execution.id,
+      stepRunId: firstClaim.stepRun.id,
+      resultJson: firstResult,
+      outputJson: firstOutput
+    });
+    assert.equal(firstCompletion.kind, "next_step_queued");
+
+    await dispatchWithNoopPublisher(triggered.execution.id);
+    const secondClaim = await claimQueuedExecutionStep(triggered.execution.id);
+    assert.equal(secondClaim.kind, "claimed");
+    assert.deepEqual(secondClaim.priorStepResults.first, firstResult);
+    assert.deepEqual(secondClaim.stepRun.inputJson, firstOutput);
+
+    const finalOutput = { score: 97 };
+    const finalResult = {
+      output: finalOutput,
+      metadata: {
+        resultVersion: 1,
+        stepType: "ai",
+        durationMs: 80,
+        totalTokens: 42
+      }
+    };
+    const finalCompletion = await completeClaimedExecutionStep({
+      executionId: secondClaim.execution.id,
+      stepRunId: secondClaim.stepRun.id,
+      resultJson: finalResult,
+      outputJson: finalOutput
+    });
+    assert.equal(finalCompletion.kind, "completed");
+
+    const [storedExecution] = await database.queryClient<
+      Array<{ output_json: unknown }>
+    >`
+      select output_json
+      from executions
+      where id = ${triggered.execution.id}
+    `;
+    const storedSteps = await database.queryClient<
+      Array<{ step_key: string; output_json: unknown }>
+    >`
+      select step_key, output_json
+      from step_runs
+      where execution_id = ${triggered.execution.id}
+      order by created_at
+    `;
+
+    assert.deepEqual(storedExecution?.output_json, finalOutput);
+    assert.deepEqual(storedSteps, [
+      { step_key: "first", output_json: firstResult },
+      { step_key: "second", output_json: finalResult }
+    ]);
+  });
+
+  it("does not retry permanent step failures", async () => {
+    const seeded = await seedWorkflow(database, users, ["only-step"], {
+      maxAttempts: 3,
+      backoffMs: 0
+    });
+    const triggered = await triggerExecutionForWorkflow({
+      ownerId: seeded.userId,
+      workflowId: seeded.workflowId,
+      inputJson: {}
+    });
+    assert.equal(triggered.kind, "created");
+
+    await dispatchWithNoopPublisher(triggered.execution.id);
+    const claim = await claimQueuedExecutionStep(triggered.execution.id);
+    assert.equal(claim.kind, "claimed");
+    const failure = await failOrRetryClaimedExecutionStep({
+      executionId: claim.execution.id,
+      stepRunId: claim.stepRun.id,
+      errorJson: { code: "EXPRESSION_RESOLUTION_FAILED" },
+      retryPolicy: claim.stepDefinition.retry,
+      retryable: false
+    });
+
+    assert.equal(failure.kind, "failed");
+    assert.equal((await getOutboxRows(database, triggered.execution.id)).length, 1);
+  });
+
   it("removes terminal jobs before resetting their dispatched intent", async () => {
     const seeded = await seedWorkflow(database, users, ["only-step"]);
     const triggered = await triggerExecutionForWorkflow({
